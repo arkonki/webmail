@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { Contact } from '../types';
 import Avatar from './Avatar';

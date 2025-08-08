@@ -1,4 +1,3 @@
-
 import React, { useState, useRef } from 'react';
 import { ContactGroup } from '../types';
 import { UsersIcon } from './icons/UsersIcon';

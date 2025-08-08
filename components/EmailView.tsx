@@ -41,7 +41,7 @@ const SingleEmailInThread: React.FC<{ email: Email; isExpanded: boolean; onToggl
                     <div className="flex flex-col sm:flex-row sm:items-center min-w-0">
                         <div className="flex flex-wrap items-baseline gap-x-2">
                             <span className="font-semibold text-on-surface dark:text-dark-on-surface truncate" title={email.senderName}>{email.senderName}</span>
-                            <span className="text-sm text-gray-500 dark:text-gray-400 truncate" title={email.senderEmail}>&lt;{email.senderEmail}&gt;</span>
+                            <span className="text-sm text-gray-500 dark:text-gray-400 truncate" title={email.senderEmail}><{email.senderEmail}></span>
                             {!isExpanded && <span className="text-sm text-gray-500 dark:text-gray-400 sm:hidden">, {formatDate(email.timestamp)}</span>}
                         </div>
                         <div className="hidden sm:flex items-center">

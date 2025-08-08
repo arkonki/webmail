@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { MailIcon } from './icons/MailIcon';
 import { useAppContext } from '../context/AppContext';

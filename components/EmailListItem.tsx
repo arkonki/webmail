@@ -1,4 +1,3 @@
-
 import React, { useRef } from 'react';
 import { Conversation, SystemLabel, ActionType, Email, SystemFolder } from '../types';
 import { useAppContext } from '../context/AppContext';
