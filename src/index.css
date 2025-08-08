@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+[contenteditable][placeholder]:empty:before {
+  content: attr(placeholder);
+  pointer-events: none;
+  display: block; /* For Firefox */
+  @apply text-gray-500;
+}
+.dark [contenteditable][placeholder]:empty:before {
+  @apply text-gray-400;
+}
+blockquote {
+  @apply border-l-2 border-gray-200 my-2 pl-4 text-gray-500;
+}
+.dark blockquote {
+  @apply border-l-gray-600 text-gray-400;
+}
+.compose-editor ul, .compose-editor ol,
+.signature-editor ul, .signature-editor ol {
+  @apply pl-8 my-2;
+}
+.compose-editor ul, .signature-editor ul {
+  @apply list-disc;
+}
+.compose-editor ol, .signature-editor ol {
+  @apply list-decimal;
+}
+.compose-editor a, .signature-editor a {
+  @apply text-primary underline decoration-1;
+}
+.dark .compose-editor a, .dark .signature-editor a {
+   @apply text-blue-400;
+}
