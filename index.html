@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Modern Webmail Client</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              'primary': '#0B57D0',
+              'primary-hover': '#0A4CB8',
+              'surface': '#f6f8fc',
+              'on-surface': '#1f1f1f',
+              'surface-container': '#f0f4f9',
+              'outline': '#c4c7c5',
+              'compose-accent': '#C2E7FF',
+              'dark-surface': '#1f1f1f',
+              'dark-on-surface': '#e3e3e3',
+              'dark-surface-container': '#2d2d2d',
+              'dark-outline': '#444746',
+            },
+          },
+        },
+      }
+    </script>
+    <style>
+      [contenteditable][placeholder]:empty:before {
+        content: attr(placeholder);
+        pointer-events: none;
+        display: block; /* For Firefox */
+        color: #6b7280; /* text-gray-500 */
+      }
+      .dark [contenteditable][placeholder]:empty:before {
+        color: #9ca3af; /* text-gray-400 */
+      }
+      blockquote {
+        border-left: 2px solid #e5e7eb; /* border-gray-200 */
+        margin: 0.5rem 0;
+        padding-left: 1rem;
+        color: #6b7280; /* text-gray-500 */
+      }
+      .dark blockquote {
+        border-left-color: #4b5563; /* border-gray-600 */
+        color: #9ca3af; /* text-gray-400 */
+      }
+      .compose-editor ul, .compose-editor ol,
+      .signature-editor ul, .signature-editor ol {
+        padding-left: 2rem;
+        margin-top: 0.5rem;
+        margin-bottom: 0.5rem;
+      }
+      .compose-editor ul, .signature-editor ul {
+        list-style-type: disc;
+      }
+      .compose-editor ol, .signature-editor ol {
+        list-style-type: decimal;
+      }
+      .compose-editor a, .signature-editor a {
+        color: #0B57D0; /* primary */
+        text-decoration: underline;
+        text-decoration-thickness: 1px;
+      }
+      .dark .compose-editor a, .dark .signature-editor a {
+         color: #60a5fa; /* A nice blue for dark mode */
+      }
+    </style>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@^19.1.1",
+    "react-dom/": "https://esm.sh/react-dom@^19.1.1/",
+    "react/": "https://esm.sh/react@^19.1.1/",
+    "react-dom": "https://esm.sh/react-dom@^19.1.1",
+    "vite": "https://esm.sh/vite@^7.1.0",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.0.0",
+    "cors": "https://esm.sh/cors@^2.8.5",
+    "express": "https://esm.sh/express@^5.1.0",
+    "nodemailer": "https://esm.sh/nodemailer@^7.0.5",
+    "node-imap": "https://esm.sh/node-imap@^0.9.6",
+    "crypto": "https://esm.sh/crypto@^1.0.1",
+    "sqlite": "https://esm.sh/sqlite@^5.1.1",
+    "sqlite3": "https://esm.sh/sqlite3@^5.1.7",
+    "mailparser": "https://esm.sh/mailparser@^3.7.4",
+    "sanitize-html": "https://esm.sh/sanitize-html@^2.17.0",
+    "helmet": "https://esm.sh/helmet@^8.1.0",
+    "i18next": "https://esm.sh/i18next@^23.12.2",
+    "react-i18next": "https://esm.sh/react-i18next@^15.0.0",
+    "i18next-http-backend": "https://esm.sh/i18next-http-backend@^2.5.2",
+    "i18next-browser-languagedetector": "https://esm.sh/i18next-browser-languagedetector@^8.0.0",
+    "path": "https://esm.sh/path@^0.12.7"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+  <body class="bg-surface text-on-surface dark:bg-dark-surface dark:text-dark-on-surface antialiased">
+    <div id="root"></div>
+    <div id="modal-portal"></div>
+    <div id="toast-container" class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2"></div>
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html>

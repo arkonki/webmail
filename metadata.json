@@ -1,0 +1,9 @@
+
+
+{
+  "name": "Modern Webmail Client - Production",
+  "description": "A modern webmail client UI that imitates the usability and functionality of services like Gmail. This will be a full stack system",
+  "requestFramePermissions": [],
+  "env": [],
+  "prompt": ""
+}
