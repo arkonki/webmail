@@ -89,6 +89,7 @@ async function seedDataForNewUser(userId: string) {
         autoResponder: { isEnabled: false, subject: '', message: '' },
         rules: [],
         sendDelay: { isEnabled: true, duration: 5 },
+        language: 'en',
     };
     await db.run('INSERT INTO settings (userId, value) VALUES (?, ?)', userId, JSON.stringify(initialSettings));
 }

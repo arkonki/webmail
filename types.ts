@@ -1,4 +1,3 @@
-
 export enum SystemFolder {
   INBOX = 'Inbox',
   SENT = 'Sent',
@@ -133,4 +132,5 @@ export interface AppSettings {
     isEnabled: boolean;
     duration: 5 | 10 | 20 | 30; // seconds
   };
+  language: string;
 }

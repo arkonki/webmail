@@ -1,4 +1,3 @@
-
 import React, { createContext, useState, useContext, ReactNode, useMemo, useCallback, useEffect } from 'react';
 import { Email, ActionType, Label, Conversation, User, AppSettings, Signature, AutoResponder, Rule, SystemLabel, Contact, ContactGroup, SystemFolder, UserFolder } from '../types';
 import { useToast } from './ToastContext';
@@ -153,6 +152,7 @@ const initialAppSettings: AppSettings = {
   autoResponder: { isEnabled: false, subject: '', message: '' },
   rules: [],
   sendDelay: { isEnabled: true, duration: 5 },
+  language: 'en',
 };
 
 const AppContext = createContext<AppContextType | undefined>(undefined);

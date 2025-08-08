@@ -7,7 +7,7 @@ let authToken: string | null = null;
 
 // Use environment variable for production, otherwise use a relative path for dev proxy
 // Safely access the environment variable to prevent runtime errors.
-const API_BASE = (import.meta.env && import.meta.env.VITE_API_BASE_URL) || '';
+const API_BASE = ((import.meta as any).env && (import.meta as any).env.VITE_API_BASE_URL) || '';
 
 // A helper to make authenticated requests
 const fetchApi = async (path: string, options: RequestInit = {}) => {

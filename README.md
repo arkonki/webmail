@@ -1,4 +1,3 @@
-
 # Modern Webmail Client
 
 This project is a complete, full-stack modern webmail client built with React, TypeScript, and a Node.js/Express backend. It is designed to emulate the usability and functionality of services like Gmail, providing a clean interface for managing emails, contacts, and settings. The application is architected to run as a single, unified server process, making deployment straightforward.
@@ -52,29 +51,42 @@ You need to have [Node.js](https://nodejs.org/) (version 18 or later) and `npm` 
 3.  **Configure the Mail Server:**
     This is the most important setup step.
     - Open the file `server/mailService.ts`.
-    - Find the `TODO` comments inside the `getImapConfig` and `getSmtpTransport` functions.
+    - Find the `TODO` comments inside the `getImapConfig` and `getSmtpConfig` functions.
     - Replace the placeholder `host` and `port` details with the actual server details for your mail provider (e.g., `mail.veebimajutus.ee`).
 
-### Running the Application Locally (Development Mode)
+### Running the Application
 
-For development, you run the frontend and backend in two separate terminals to enable hot-reloading.
+There are two primary ways to run this application:
 
-1.  **Run the Backend Server:**
-    In your first terminal, run:
+#### 1. Development Mode (Hot-Reloading Enabled)
+
+For development, you run the frontend and backend in two separate terminals. This allows the frontend to instantly update in your browser as you make code changes.
+
+-   **Terminal 1: Start the Backend API Server**
     ```bash
     npm run serve
     ```
-    This will start the Node.js/Express server on `http://localhost:3001`. It will also initialize the SQLite database in `data/app.db`.
+    This starts the Node.js/Express server on `http://localhost:3001`.
 
-2.  **Run the Frontend Client:**
-    In your second terminal, run:
+-   **Terminal 2: Start the Frontend Dev Server**
     ```bash
     npm run dev
     ```
-    This will start the Vite development server, typically on `http://localhost:5173`. The `vite.config.ts` file is configured to proxy API requests from the frontend to the backend, so you can work on them as if they were a single application.
+    This starts the Vite development server, usually on `http://localhost:5173`. It is configured to proxy all `/api` requests to your backend server.
 
-3.  **Access the App:**
-    Open your browser and navigate to the address provided by the Vite server (e.g., `http://localhost:5173`). You should see the login screen. Use your real email credentials (the ones for the server you configured in `mailService.ts`) to log in.
+-   **Access the App:** Open your browser to the address provided by Vite (e.g., `http://localhost:5173`).
+
+#### 2. Production Mode (Locally)
+
+This method mimics how your application would run on a production server. It's the best way to test the final, built version of the app.
+
+-   **Build and Start the Application**
+    ```bash
+    npm start
+    ```
+    This single command first builds the optimized frontend and then starts the Express server. The server will handle both the API requests and serve the built frontend files.
+
+-   **Access the App:** Open your browser to `http://localhost:3001`.
 
 ---
 
@@ -89,7 +101,7 @@ This project is configured to be deployed as a single, self-contained applicatio
     npm install
     ```
     
-2.  **Build and Start the Server**: Use the `start` script. This single command first builds the React frontend for production, then starts the Express server which serves both the frontend and the API.
+2.  **Build and Start the Server**: Use the `start` script.
     ```bash
     npm start
     ```

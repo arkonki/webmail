@@ -155,7 +155,8 @@
     "seconds_10": "10 seconds",
     "seconds_20": "20 seconds",
     "seconds_30": "30 seconds",
-    "save": "Save Changes"
+    "save": "Save Changes",
+    "displayLanguage": "Display Language"
   },
   "signatureSettings": {
     "title": "Email Signature",
@@ -333,6 +334,7 @@
     "autoResponderUpdated": "Auto-responder settings updated.",
     "ruleAdded": "Rule added.",
     "ruleDeleted": "Rule deleted.",
-    "sendDelayUpdated": "Send delay settings updated."
+    "sendDelayUpdated": "Send delay settings updated.",
+    "generalSettingsUpdated": "General settings updated."
   }
 }

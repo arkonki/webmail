@@ -1,4 +1,3 @@
-
 import React, { createContext, useState, useContext, ReactNode, useCallback, useEffect } from 'react';
 import ReactDOM from 'react-dom';
 import { useTranslation } from 'react-i18next';
@@ -46,10 +45,10 @@ const ToastComponent: React.FC<{ toast: Toast; onDismiss: () => void }> = ({ toa
 
     return (
         <div className="bg-gray-800 dark:bg-gray-200 text-white dark:text-gray-900 text-sm py-2 px-4 rounded-full shadow-lg flex items-center animate-fade-in-out">
-            <span>{t(messageKey, tOptions)}</span>
+            <span>{String(t(messageKey, tOptions))}</span>
             {action && (
                 <button onClick={handleActionClick} className="ml-4 font-bold text-blue-300 dark:text-blue-600 hover:underline">
-                    {t(action.label)}
+                    {String(t(action.label))}
                 </button>
             )}
         </div>

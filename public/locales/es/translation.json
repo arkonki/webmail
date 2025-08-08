@@ -155,7 +155,8 @@
     "seconds_10": "10 segundos",
     "seconds_20": "20 segundos",
     "seconds_30": "30 segundos",
-    "save": "Guardar Cambios"
+    "save": "Guardar Cambios",
+    "displayLanguage": "Idioma de visualización"
   },
   "signatureSettings": {
     "title": "Firma de Correo",
@@ -333,6 +334,7 @@
     "autoResponderUpdated": "Configuración de respuesta automática actualizada.",
     "ruleAdded": "Regla añadida.",
     "ruleDeleted": "Regla eliminada.",
-    "sendDelayUpdated": "Configuración de retraso de envío actualizada."
+    "sendDelayUpdated": "Configuración de retraso de envío actualizada.",
+    "generalSettingsUpdated": "Configuración general actualizada."
   }
 }
