@@ -7,8 +7,9 @@ import RulesSettings from './RulesSettings';
 import GeneralSettings from './GeneralSettings';
 import LabelSettings from './LabelSettings';
 import FolderSettings from './FolderSettings';
+import ProfileSettings from './ProfileSettings';
 
-type SettingsTab = 'general' | 'labels' | 'folders' | 'signature' | 'autoResponder' | 'rules';
+type SettingsTab = 'general' | 'profile' | 'labels' | 'folders' | 'signature' | 'autoResponder' | 'rules';
 
 const Settings: React.FC = () => {
     const [activeTab, setActiveTab] = useState<SettingsTab>('general');
@@ -16,6 +17,7 @@ const Settings: React.FC = () => {
     const renderTabContent = () => {
         switch (activeTab) {
             case 'general': return <GeneralSettings />;
+            case 'profile': return <ProfileSettings />;
             case 'labels': return <LabelSettings />;
             case 'folders': return <FolderSettings />;
             case 'signature': return <SignatureSettings />;
@@ -47,6 +49,7 @@ const Settings: React.FC = () => {
             <div className="flex flex-row gap-8">
                 <div className="flex flex-col gap-2 p-2 bg-white dark:bg-dark-surface-container rounded-lg border border-outline dark:border-dark-outline self-start w-48 flex-shrink-0">
                     <TabButton tab="general" label="General" />
+                    <TabButton tab="profile" label="Profile" />
                     <TabButton tab="labels" label="Labels" />
                     <TabButton tab="folders" label="Folders" />
                     <TabButton tab="signature" label="Signature" />

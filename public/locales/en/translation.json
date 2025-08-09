@@ -1,11 +1,11 @@
+
 {
   "app": {
     "loading": "Loading..."
   },
   "login": {
     "title": "Webmail Client",
-    "subtitle": "A mock-data demonstration.",
-    "subtext": "(Enter any non-empty credentials)",
+    "subtitle": "Please sign in to your account.",
     "emailLabel": "Email address",
     "passwordLabel": "Password",
     "signInButton": "Sign in",
@@ -139,6 +139,7 @@
   "settings": {
     "title": "Settings",
     "general": "General",
+    "profile": "Profile",
     "labels": "Labels",
     "folders": "Folders",
     "signature": "Signature",
@@ -157,6 +158,30 @@
     "seconds_30": "30 seconds",
     "save": "Save Changes",
     "displayLanguage": "Display Language"
+  },
+  "profileSettings": {
+    "title": "Profile Settings",
+    "changePhoto": "Change Photo",
+    "photoHint": "PNG or JPG, up to 2MB.",
+    "displayName": "Display Name",
+    "displayNameHint": "This is the name recipients will see when you send an email.",
+    "save": "Save Changes"
+  },
+  "onboarding": {
+    "welcome": "Welcome to Webmail!",
+    "intro": "Let's set up your profile to personalize your experience.",
+    "uploadHint": "Upload a profile picture (optional)",
+    "displayName": "Display Name",
+    "displayNameHint": "This is the name that will appear on emails you send.",
+    "displayNamePlaceholder": "e.g., John Doe",
+    "accountRepresents": "This account represents a...",
+    "person": "Person",
+    "company": "Company",
+    "firstName": "First Name",
+    "lastName": "Last Name",
+    "companyName": "Company Name",
+    "jobTitle": "Job Title",
+    "save": "Save and Get Started"
   },
   "signatureSettings": {
     "title": "Email Signature",
@@ -212,7 +237,9 @@
     "title": "Folders",
     "create": "Create new folder",
     "noFolders": "No custom folders have been created.",
-    "confirmDelete": "Are you sure you want to delete the folder \"{{name}}\"? All emails inside will be moved to Archive."
+    "sync": "Sync with Mail Server",
+    "subscribed": "Subscribed",
+    "imapTag": "IMAP"
   },
   "contacts": {
     "title": "Contacts",
@@ -275,6 +302,7 @@
     "welcome": "Welcome, {{name}}!",
     "logout": "You have been logged out.",
     "loginFailed": "Login failed. Please try again.",
+    "newMail": "New mail from {{sender}}: {{subject}}",
     "moved": "{{count}} conversation moved to \"{{folderName}}\".",
     "moved_plural": "{{count}} conversations moved to \"{{folderName}}\".",
     "moveFailed": "Failed to move conversation(s).",
@@ -309,6 +337,9 @@
     "renameFolderFailed": "Failed to rename folder.",
     "folderDeleted": "Folder \"{{name}}\" deleted. Its contents were moved to Archive.",
     "deleteFolderFailed": "Failed to delete folder.",
+    "foldersSynced": "Folders synced with mail server.",
+    "folderSyncFailed": "Failed to sync folders.",
+    "subscriptionUpdateFailed": "Failed to update folder subscription.",
     "contactAdded": "Contact added.",
     "addContactFailed": "Failed to add contact.",
     "contactUpdated": "Contact updated.",
@@ -335,6 +366,10 @@
     "ruleAdded": "Rule added.",
     "ruleDeleted": "Rule deleted.",
     "sendDelayUpdated": "Send delay settings updated.",
-    "generalSettingsUpdated": "General settings updated."
+    "generalSettingsUpdated": "General settings updated.",
+    "profileSetupComplete": "Profile setup complete!",
+    "profileSetupFailed": "Failed to save profile.",
+    "profileUpdated": "Profile updated.",
+    "profileUpdateFailed": "Failed to update profile."
   }
 }

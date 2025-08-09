@@ -1,11 +1,11 @@
+
 {
   "app": {
     "loading": "Laadimine..."
   },
   "login": {
     "title": "Veebimeili Klient",
-    "subtitle": "Näidisandmetega demonstratsioon.",
-    "subtext": "(Sisestage mis tahes mittetühjad andmed)",
+    "subtitle": "Palun logige oma kontole sisse.",
     "emailLabel": "E-posti aadress",
     "passwordLabel": "Parool",
     "signInButton": "Logi sisse",
@@ -212,7 +212,9 @@
     "title": "Kaustad",
     "create": "Loo uus kaust",
     "noFolders": "Kohandatud kaustu pole loodud.",
-    "confirmDelete": "Kas oled kindel, et soovid kustutada kausta \"{{name}}\"? Kõik selles olevad kirjad teisaldatakse arhiivi."
+    "sync": "Sünkrooni meiliserveriga",
+    "subscribed": "Tellitud",
+    "imapTag": "IMAP"
   },
   "contacts": {
     "title": "Kontaktid",
@@ -309,6 +311,9 @@
     "renameFolderFailed": "Kausta ümbernimetamine ebaõnnestus.",
     "folderDeleted": "Kaust \"{{name}}\" kustutatud. Selle sisu teisaldati arhiivi.",
     "deleteFolderFailed": "Kausta kustutamine ebaõnnestus.",
+    "foldersSynced": "Kaustad sünkroonitud meiliserveriga.",
+    "folderSyncFailed": "Kaustade sünkroonimine ebaõnnestus.",
+    "subscriptionUpdateFailed": "Kausta tellimuse uuendamine ebaõnnestus.",
     "contactAdded": "Kontakt lisatud.",
     "addContactFailed": "Kontakti lisamine ebaõnnestus.",
     "contactUpdated": "Kontakt uuendatud.",

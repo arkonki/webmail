@@ -7,8 +7,8 @@ import { useTranslation } from 'react-i18next';
 const Login: React.FC = () => {
   const { login, isLoading } = useAppContext();
   const { t } = useTranslation();
-  const [email, setEmail] = useState('test.user@example.com');
-  const [password, setPassword] = useState('password');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -25,9 +25,6 @@ const Login: React.FC = () => {
           </h2>
           <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
             {t('login.subtitle')}
-          </p>
-          <p className="mt-1 text-xs text-gray-500 dark:text-gray-500">
-            {t('login.subtext')}
           </p>
         </div>
 

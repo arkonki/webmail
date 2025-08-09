@@ -9,6 +9,11 @@
       "example": "postgresql://user:password@localhost:5432/webmail"
     },
     {
+      "name": "ENCRYPTION_KEY",
+      "description": "A 64-character hex string (32 bytes) used for encrypting sensitive session data. This is a critical secret and must be set.",
+      "example": "a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8"
+    },
+    {
       "name": "SOCKET_PATH",
       "description": "Optional. Path to a UNIX socket file for production. If set, the server listens on the socket instead of a network port.",
       "example": "/var/run/webmail.socket"

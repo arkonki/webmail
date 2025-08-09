@@ -1,3 +1,4 @@
+
 import React, { useState, useRef } from 'react';
 import { useAppContext } from '../context/AppContext';
 import { PencilIcon } from './icons/PencilIcon';
@@ -200,7 +201,7 @@ const Sidebar: React.FC = () => {
                  )}
               </div>
               <ul>
-                {userFolders.map(folder => (
+                {userFolders.filter(folder => folder.isSubscribed).map(folder => (
                    <NavItem
                     key={folder.id}
                     name={folder.name}
@@ -211,7 +212,7 @@ const Sidebar: React.FC = () => {
                     onDrop={(e) => handleDropOnFolder(e, folder.id)}
                     onEdit={() => handleOpenFolderModal(folder)}
                     onDelete={() => handleDeleteFolder(folder)}
-                    isEditable
+                    isEditable={folder.source === 'user'}
                     count={unreadCounts[folder.id]}
                   />
                 ))}

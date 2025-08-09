@@ -1,6 +1,5 @@
 
-
-import React, { createContext, useState, useContext, ReactNode, useMemo, useCallback, useEffect } from 'react';
+import React, { createContext, useState, useContext, ReactNode, useMemo, useCallback, useEffect, useRef } from 'react';
 import { Email, ActionType, Label, Conversation, User, AppSettings, Signature, AutoResponder, Rule, SystemLabel, Contact, ContactGroup, SystemFolder, UserFolder } from '../types';
 import { useToast } from './ToastContext';
 import * as api from '../services/apiService';
@@ -106,12 +105,14 @@ interface AppContextType {
   openFocusedConversation: () => void;
   setView: (view: View) => void;
   
-  // Settings
+  // Settings & Profile
   updateSignature: (signature: Signature) => void;
   updateAutoResponder: (autoResponder: AutoResponder) => void;
   addRule: (rule: Omit<Rule, 'id'>) => void;
   deleteRule: (ruleId: string) => void;
   updateGeneralSettings: (settings: { sendDelay: AppSettings['sendDelay'], language: string }) => void;
+  completeOnboarding: (data: Partial<AppSettings>) => void;
+  updateProfile: (data: { displayName: string, profilePicture?: string }) => void;
 
   // Label Management
   createLabel: (name: string, color: string) => void;
@@ -122,6 +123,8 @@ interface AppContextType {
   createFolder: (name: string) => void;
   updateFolder: (id: string, newName: string) => void;
   deleteFolder: (id: string) => void;
+  syncFolders: () => void;
+  updateFolderSubscription: (id: string, isSubscribed: boolean) => void;
 
   // Contacts
   addContact: (contact: Omit<Contact, 'id'>) => void;
@@ -162,6 +165,9 @@ const initialAppSettings: AppSettings = {
   rules: [],
   sendDelay: { isEnabled: true, duration: 5 },
   language: 'en',
+  isOnboardingCompleted: false,
+  displayName: '',
+  profilePicture: '',
 };
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -184,6 +190,7 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedConversationIds, setSelectedConversationIds] = useState(new Set<string>());
   const { addToast } = useToast();
+  const wsRef = useRef<WebSocket | null>(null);
   const [theme, setTheme] = useState<Theme>(() => {
     const savedTheme = localStorage.getItem('theme') as Theme;
     if (savedTheme) {
@@ -204,6 +211,46 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
     setCurrentPage(1);
   }, [currentSelection, searchQuery]);
 
+  // WebSocket connection management
+  useEffect(() => {
+    if (user && !wsRef.current) {
+        const token = localStorage.getItem('sessionToken');
+        if (!token) return;
+
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws?token=${token}`;
+        
+        const ws = new WebSocket(wsUrl);
+        wsRef.current = ws;
+
+        ws.onopen = () => console.log('WebSocket connected');
+        
+        ws.onmessage = (event) => {
+            const message = JSON.parse(event.data);
+            if (message.type === 'NEW_EMAIL') {
+                const newEmail: Email = message.payload;
+                setEmails(prev => [newEmail, ...prev]);
+                addToast('toasts.newMail', { tOptions: { sender: newEmail.senderName, subject: newEmail.subject } });
+            }
+        };
+
+        ws.onclose = () => {
+            console.log('WebSocket disconnected');
+            wsRef.current = null;
+            // Optional: Implement reconnect logic here
+        };
+
+        ws.onerror = (err) => console.error('WebSocket error:', err);
+    }
+
+    return () => {
+        if (wsRef.current) {
+            wsRef.current.close();
+            wsRef.current = null;
+        }
+    };
+  }, [user, addToast]);
+
 
   const checkUserSession = useCallback(async () => {
     setIsLoading(true);
@@ -211,7 +258,11 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
         const session = await api.apiCheckSession();
         if (session?.user) {
             const initialData = await api.getInitialData();
-            setUser(session.user);
+            setUser({
+                email: session.user.email,
+                name: initialData.appSettings.displayName || session.user.name,
+                profilePicture: initialData.appSettings.profilePicture
+            });
             setEmails(initialData.emails);
             setLabels(initialData.labels);
             setUserFolders(initialData.userFolders);
@@ -221,6 +272,8 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
             if (initialData.appSettings.language) {
                 i18n.changeLanguage(initialData.appSettings.language);
             }
+        } else {
+             setUser(null);
         }
     } catch (error) {
         console.error("Session check failed:", error);
@@ -236,10 +289,17 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
         if (!email || !pass) {
             throw new Error('Please enter both email and password.');
         }
-        const { user } = await api.apiLogin(email, pass);
+        const { user: apiUser, token } = await api.apiLogin(email, pass);
+        localStorage.setItem('sessionToken', token);
+        api.setAuthToken(token);
+        
         const initialData = await api.getInitialData();
-
-        setUser(user);
+        
+        setUser({
+            email: apiUser.email,
+            name: initialData.appSettings.displayName || apiUser.name,
+            profilePicture: initialData.appSettings.profilePicture
+        });
         setEmails(initialData.emails);
         setLabels(initialData.labels);
         setUserFolders(initialData.userFolders);
@@ -251,7 +311,7 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
         }
         
         setCurrentSelection({type: 'folder', id: SystemFolder.INBOX});
-        addToast('toasts.welcome', { tOptions: { name: user.name } });
+        addToast('toasts.welcome', { tOptions: { name: initialData.appSettings.displayName || apiUser.name } });
     } catch (error: any) {
         addToast(error.message || 'toasts.loginFailed');
         console.error(error);
@@ -261,7 +321,12 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
   }, [addToast, i18n]);
 
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
+    if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+    }
+    await api.apiLogout();
     setUser(null);
     setEmails([]);
     setLabels([]);
@@ -310,20 +375,31 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
 
   const unreadCounts = useMemo(() => {
     const counts: { [key: string]: number } = {};
+    const allLabelIds = [...labels.map(l => l.id), SystemLabel.STARRED];
+    
+    allLabelIds.forEach(id => counts[id] = 0);
+    Object.values(SystemFolder).forEach(id => counts[id] = 0);
+    userFolders.forEach(f => counts[f.id] = 0);
+    
     allConversations.forEach(c => {
       if (!c.isRead) {
         // Count for folder
-        counts[c.folderId] = (counts[c.folderId] || 0) + 1;
+        if (counts[c.folderId] !== undefined) {
+            counts[c.folderId]++;
+        }
+        
         // Count for labels (excluding spam/trash folders)
         if (c.folderId !== SystemFolder.SPAM && c.folderId !== SystemFolder.TRASH) {
           c.labelIds.forEach(labelId => {
-            counts[labelId] = (counts[labelId] || 0) + 1;
+            if (counts[labelId] !== undefined) {
+                counts[labelId]++;
+            }
           });
         }
       }
     });
     return counts;
-  }, [allConversations]);
+  }, [allConversations, labels, userFolders]);
 
 
   const filteredConversations = useMemo(() => {
@@ -694,6 +770,25 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
       }
   }, [addToast, userFolders]);
 
+  const syncFolders = useCallback(async () => {
+    try {
+        const { folders: updatedFolders } = await api.apiSyncFolders();
+        setUserFolders(updatedFolders);
+        addToast('toasts.foldersSynced');
+    } catch (err) {
+        addToast('toasts.folderSyncFailed', { duration: 4000 });
+    }
+  }, [addToast]);
+
+  const updateFolderSubscription = useCallback(async (id: string, isSubscribed: boolean) => {
+    try {
+        const { folders: updatedFolders } = await api.apiUpdateFolderSubscription(id, isSubscribed);
+        setUserFolders(updatedFolders);
+    } catch (err) {
+        addToast('toasts.subscriptionUpdateFailed', { duration: 4000 });
+    }
+  }, [addToast]);
+
   const markAsSpam = useCallback((conversationIds: string[]) => {
     moveConversations(conversationIds, SystemFolder.SPAM);
   }, [moveConversations]);
@@ -856,6 +951,29 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
       }
       addToast("toasts.generalSettingsUpdated"); 
   }, [addToast, appSettings, i18n]);
+
+  const completeOnboarding = useCallback(async (data: Partial<AppSettings>) => {
+      try {
+          const { settings, contacts } = await api.apiCompleteOnboarding(data);
+          setAppSettings(settings);
+          setContacts(contacts);
+          setUser(prevUser => prevUser ? { ...prevUser, name: settings.displayName, profilePicture: settings.profilePicture } : null);
+          addToast("toasts.profileSetupComplete");
+      } catch (err) {
+          addToast("toasts.profileSetupFailed", { duration: 4000 });
+      }
+  }, [addToast]);
+
+  const updateProfile = useCallback(async (data: { displayName: string, profilePicture?: string }) => {
+      try {
+          const { settings } = await api.apiUpdateProfile(data);
+          setAppSettings(settings);
+          setUser(prevUser => prevUser ? { ...prevUser, name: settings.displayName, profilePicture: settings.profilePicture } : null);
+          addToast("toasts.profileUpdated");
+      } catch (err) {
+          addToast("toasts.profileUpdateFailed", { duration: 4000 });
+      }
+  }, [addToast]);
   
   const setViewCallback = useCallback((newView: View) => { setView(newView); setSelectedConversationId(null); setFocusedConversationId(null); setSearchQuery(''); setSelectedConversationIds(new Set()); setSelectedContactId(null); }, []);
 
@@ -868,9 +986,9 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
     toggleLabel, deleteConversation, archiveConversation, markAsRead, markAsUnread, markAsSpam, markAsNotSpam,
     toggleConversationSelection, selectAllConversations, deselectAllConversations, bulkDelete, bulkMarkAsRead, bulkMarkAsUnread,
     toggleTheme, toggleSidebar, handleEscape, navigateConversationList, openFocusedConversation, setView: setViewCallback,
-    updateSignature, updateAutoResponder, addRule, deleteRule, updateGeneralSettings,
+    updateSignature, updateAutoResponder, addRule, deleteRule, updateGeneralSettings, completeOnboarding, updateProfile,
     createLabel, updateLabel, deleteLabel,
-    createFolder, updateFolder, deleteFolder,
+    createFolder, updateFolder, deleteFolder, syncFolders, updateFolderSubscription,
     addContact, updateContact, deleteContact, setSelectedContactId, importContacts,
     createContactGroup, renameContactGroup, deleteContactGroup, addContactToGroup, removeContactFromGroup, setSelectedGroupId,
   };

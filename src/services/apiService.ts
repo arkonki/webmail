@@ -1,9 +1,20 @@
+
 import {
     User, Email, Label, UserFolder, Contact, ContactGroup, SystemFolder, AppSettings
 } from '../types';
 
 // This will hold the JWT or session token after login
 let authToken: string | null = null;
+
+export const setAuthToken = (token: string | null) => {
+    authToken = token;
+};
+
+// Initialize token from localStorage on module load
+const storedToken = localStorage.getItem('sessionToken');
+if (storedToken) {
+    setAuthToken(storedToken);
+}
 
 // Use environment variable for production, otherwise use a relative path for dev proxy
 // Safely access the environment variable to prevent runtime errors.
@@ -33,6 +44,11 @@ const fetchApi = async (path: string, options: RequestInit = {}) => {
         } catch (e) {
             // Ignore if response body is not JSON
         }
+        if (response.status === 401) {
+            // Auto-logout on auth error
+            setAuthToken(null);
+            localStorage.removeItem('sessionToken');
+        }
         throw new Error(errorMessage);
     }
     
@@ -47,25 +63,38 @@ const fetchApi = async (path: string, options: RequestInit = {}) => {
 
 // --- Auth ---
 
-export const apiLogin = async (email: string, password: string): Promise<{ user: User }> => {
+export const apiLogin = async (email: string, password: string): Promise<{ user: User, token: string }> => {
     console.log(`API: Authenticating ${email}`);
-    const { token, user } = await fetchApi('/login', {
+    const { user, token } = await fetchApi('/login', {
         method: 'POST',
         body: JSON.stringify({ email, password }),
     });
-    authToken = token; // Store the token
-    return { user };
+    // The token is set in the context after this call
+    return { user, token };
 };
 
+export const apiLogout = async (): Promise<void> => {
+    try {
+        await fetchApi('/logout', { method: 'POST' });
+    } catch (error) {
+        console.error("Logout failed, but clearing client session anyway.", error);
+    } finally {
+        setAuthToken(null);
+        localStorage.removeItem('sessionToken');
+    }
+}
+
 export const apiCheckSession = async (): Promise<{ user: User } | null> => {
-    // This assumes a token might be stored in a cookie that the browser sends automatically
-    // Or in a real scenario, we might get the token from localStorage
+    if (!authToken) {
+        return null;
+    }
     try {
         const { user } = await fetchApi('/session');
         return { user };
     } catch (error) {
         console.log("No active session found.");
-        authToken = null;
+        setAuthToken(null);
+        localStorage.removeItem('sessionToken');
         return null;
     }
 }
@@ -171,11 +200,33 @@ export const apiDeleteFolder = async (id: string): Promise<{ folders: UserFolder
     return fetchApi(`/folders/${id}`, { method: 'DELETE' });
 };
 
+export const apiSyncFolders = async (): Promise<{ folders: UserFolder[] }> => {
+    return fetchApi('/folders/sync', { method: 'POST' });
+};
 
-// --- Settings ---
+export const apiUpdateFolderSubscription = async (id: string, isSubscribed: boolean): Promise<{ folders: UserFolder[] }> => {
+    return fetchApi(`/folders/${id}/subscription`, { method: 'PATCH', body: JSON.stringify({ isSubscribed }) });
+};
+
+
+// --- Settings & Profile ---
 
 export const apiUpdateSettings = async (settings: AppSettings): Promise<{ settings: AppSettings }> => {
     return fetchApi('/settings', { method: 'POST', body: JSON.stringify(settings) });
+};
+
+export const apiCompleteOnboarding = async (data: Partial<AppSettings>): Promise<{ settings: AppSettings, contacts: Contact[] }> => {
+    return fetchApi('/onboarding', {
+        method: 'POST',
+        body: JSON.stringify(data)
+    });
+};
+
+export const apiUpdateProfile = async (data: { displayName: string, profilePicture?: string }): Promise<{ settings: AppSettings }> => {
+    return fetchApi('/settings/profile', {
+        method: 'PATCH',
+        body: JSON.stringify(data)
+    });
 };
 
 

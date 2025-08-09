@@ -1,115 +1,111 @@
+/// <reference types="node" />
 
-import express, { Request, Response, NextFunction } from 'express';
+import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import path from 'path';
 import fs from 'fs';
+import http from 'http';
+import { WebSocketServer } from 'ws';
+import url from 'url';
+
 import * as mailService from './mailService';
 import * as dbService from './databaseService';
-import { User } from '../types';
+import * as security from './security';
+import { User } from '../src/types';
 import crypto from 'crypto';
-import { Transporter } from 'nodemailer';
-import Imap from 'node-imap';
-import process from 'process';
+import * as wsManager from './wsManager';
+import * as imapManager from './imapManager';
 
 declare global {
   namespace Express {
-    interface Request {
-      credentials?: { 
+    interface Request { 
+      sessionData?: { 
         userId: string;
         user: User;
-        imap: Imap;
-        smtp: Transporter;
+        credentials: { user: string; pass: string; };
       };
     }
   }
 }
 
-const app = express();
+const app: express.Application = express();
 
 
 // --- Middleware Setup ---
 app.use(helmet());
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
 
 
-// In-memory stores for active connections and sessions.
-// In production, sessionStore should be a persistent store like Redis.
-// Connection stores are necessarily in-memory.
-const sessionStore: Record<string, { userId: string, user: User, lastAccessed: number }> = {};
-const imapConnections: Record<string, Imap> = {};
-const smtpTransporters: Record<string, Transporter> = {};
+// --- Session Management ---
 const SESSION_TTL = 3600 * 1000; // 1 hour
 
-// Middleware to attach user connections to the request if authenticated
-const authenticate = (req: Request, res: Response, next: NextFunction) => {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (token && sessionStore[token]) {
-        const session = sessionStore[token];
-        const imap = imapConnections[token];
-        const smtp = smtpTransporters[token];
+// Periodically clean up expired sessions from DB
+setInterval(() => {
+    dbService.deleteExpiredSessions();
+}, 10 * 60 * 1000); // every 10 minutes
 
-        // If session or connections are gone, or session expired, treat as unauthenticated
-        if (!imap || !smtp || (Date.now() - session.lastAccessed > SESSION_TTL)) {
-            if (imap) imap.end();
-            if (smtp) smtp.close();
-            delete imapConnections[token];
-            delete smtpTransporters[token];
-            delete sessionStore[token];
-            return res.status(401).json({ message: "Session expired or invalid." });
+
+// Middleware to authenticate requests in a stateless manner
+const authenticate = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (token) {
+        const session = await dbService.getSession(token);
+        
+        // Check if session exists and is not expired
+        if (session && session.expiresAt.getTime() >= Date.now()) {
+            await dbService.touchSession(token, SESSION_TTL);
+            try {
+                const decryptedPassword = security.decrypt(session.encryptedCredentials);
+                req.sessionData = { 
+                    userId: session.userId, 
+                    user: session.user,
+                    credentials: { user: session.user.email, pass: decryptedPassword }
+                };
+                return next();
+            } catch (error) {
+                 console.error("Credential decryption failed for token:", token, error);
+                 await dbService.deleteSession(token); // Corrupt session, delete it.
+                 return res.status(401).json({ message: "Invalid session credentials." });
+            }
         }
         
-        session.lastAccessed = Date.now();
-        req.credentials = { userId: session.userId, user: session.user, imap, smtp };
-        return next();
+        // If session exists but is expired, or doesn't exist at all, delete it just in case.
+        if (session) {
+            await dbService.deleteSession(token);
+        }
     }
-    res.status(401).json({ message: "Not authenticated" });
+    res.status(401).json({ message: "Not authenticated or session expired" });
 };
 
 
 // --- API Routes ---
 
-// Auth
-app.post('/api/login', async (req: Request, res: Response) => {
+// Auth (unauthenticated)
+app.post('/api/login', async (req: express.Request, res: express.Response) => {
     const { email, password } = req.body;
     try {
         if (!email || !password) {
             return res.status(400).json({ message: 'Email and password are required' });
         }
         
-        // 1. Validate credentials
         const user = await mailService.login(email, password);
         const dbUser = await dbService.findOrCreateUser(user.email);
+        const userSettings = await dbService.getAppSettings(dbUser.id);
         
-        // 2. Create persistent connections for the session
-        const imap = await mailService.createImapConnection(email, password);
-        const smtp = mailService.createSmtpTransport(email, password);
-
+        const encryptedCredentials = security.encrypt(password);
         const token = crypto.randomBytes(32).toString('hex');
 
-        // 3. Store connections and session info
-        sessionStore[token] = { userId: dbUser.id, user, lastAccessed: Date.now() };
-        imapConnections[token] = imap;
-        smtpTransporters[token] = smtp;
-        
-        // Handle connection closing on error/end to clean up all related stores
-        const cleanup = () => {
-            console.log(`Cleaning up connections for token ${token}`);
-            const aSmtp = smtpTransporters[token];
-            if (aSmtp) aSmtp.close();
-            delete imapConnections[token];
-            delete smtpTransporters[token];
-            delete sessionStore[token];
+        const userPayload = {
+            email: user.email,
+            name: userSettings.displayName || user.name,
+            profilePicture: userSettings.profilePicture,
         };
-        imap.once('end', cleanup);
-        imap.once('error', (err) => {
-            console.error('Persistent IMAP connection error:', err);
-            // 'end' will be called automatically, triggering cleanup
-        });
 
+        await dbService.createSession(token, dbUser.id, userPayload, encryptedCredentials, SESSION_TTL);
 
-        res.json({ user, token });
+        res.json({ user: userPayload, token });
 
     } catch (error: any) {
         console.error("Login failed:", error.message);
@@ -117,47 +113,39 @@ app.post('/api/login', async (req: Request, res: Response) => {
     }
 });
 
-app.post('/api/logout', (req: Request, res: Response) => {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (token) {
-        const imap = imapConnections[token];
-        if (imap) {
-            imap.end(); // This will trigger the 'end' event and associated cleanup
-        } else {
-            // If imap is already gone, clean up others just in case
-            const smtp = smtpTransporters[token];
-            if(smtp) smtp.close();
-            delete smtpTransporters[token];
-            delete sessionStore[token];
-        }
-    }
-    res.status(200).json({ message: "Logged out successfully."});
-});
-
-
-app.get('/api/session', (req: Request, res: Response) => {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (token && sessionStore[token]) {
-        const session = sessionStore[token];
-        if (Date.now() - session.lastAccessed < SESSION_TTL) {
-            session.lastAccessed = Date.now();
-            return res.json({ user: session.user });
-        }
-    }
-    res.status(401).json({ message: "No active session" });
-});
 
 // All subsequent routes that need authentication will use this middleware
 app.use('/api', authenticate);
 
+// Authenticated Auth routes
+app.post('/api/logout', async (req: express.Request, res: express.Response) => {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (token) {
+        const session = await dbService.getSession(token);
+        if (session) {
+            imapManager.stop(session.userId);
+        }
+        await dbService.deleteSession(token);
+    }
+    res.status(200).json({ message: "Logged out successfully."});
+});
+
+app.get('/api/session', (req: express.Request, res: express.Response) => {
+    res.json({ user: req.sessionData!.user });
+});
+
 
 // Initial Data
-app.get('/api/initial-data', async (req: Request, res: Response) => {
+app.get('/api/initial-data', async (req: express.Request, res: express.Response) => {
     try {
-        const { imap, userId } = req.credentials!;
+        const { credentials, userId } = req.sessionData!;
         
+        // Sync folders with IMAP server before fetching data
+        const imapFolders = await mailService.getImapFolders(credentials);
+        await dbService.reconcileFolders(userId, imapFolders);
+
         const [emails, labels, userFolders, contacts, contactGroups, appSettings] = await Promise.all([
-            mailService.getEmailsForUser(imap),
+            mailService.getEmailsForUser(credentials),
             dbService.getLabels(userId),
             dbService.getUserFolders(userId),
             dbService.getContacts(userId),
@@ -172,76 +160,76 @@ app.get('/api/initial-data', async (req: Request, res: Response) => {
 });
 
 // Mail Actions
-app.post('/api/conversations/move', async (req: Request, res: Response) => {
+app.post('/api/conversations/move', async (req: express.Request, res: express.Response) => {
     const { conversationIds, targetFolderId } = req.body;
-    const { imap } = req.credentials!;
-    const emails = await mailService.moveConversations(imap, conversationIds, targetFolderId);
+    const { credentials } = req.sessionData!;
+    const emails = await mailService.moveConversations(credentials, conversationIds, targetFolderId);
     res.json({ emails });
 });
 
-app.post('/api/conversations/delete-permanently', async (req: Request, res: Response) => {
+app.post('/api/conversations/delete-permanently', async (req: express.Request, res: express.Response) => {
     const { conversationIds } = req.body;
-    const { imap } = req.credentials!;
-    const emails = await mailService.deleteConversationsPermanently(imap, conversationIds);
+    const { credentials } = req.sessionData!;
+    const emails = await mailService.deleteConversationsPermanently(credentials, conversationIds);
     res.json({ emails });
 });
 
-app.post('/api/conversations/toggle-label', async (req: Request, res: Response) => {
+app.post('/api/conversations/toggle-label', async (req: express.Request, res: express.Response) => {
     const { conversationIds, labelId } = req.body;
-    const { imap, userId } = req.credentials!;
+    const { credentials, userId } = req.sessionData!;
     const label = await dbService.getLabelById(labelId, userId);
     if (!label) return res.status(404).json({message: "Label not found"});
-    const emails = await mailService.toggleLabelOnConversations(imap, conversationIds, label.name);
+    const emails = await mailService.toggleLabelOnConversations(credentials, conversationIds, label.name);
     res.json({ emails });
 });
 
-app.post('/api/conversations/mark-read', async (req: Request, res: Response) => {
+app.post('/api/conversations/mark-read', async (req: express.Request, res: express.Response) => {
     const { conversationIds, isRead } = req.body;
-    const { imap } = req.credentials!;
-    const emails = await mailService.markConversationsAsRead(imap, conversationIds, isRead);
+    const { credentials } = req.sessionData!;
+    const emails = await mailService.markConversationsAsRead(credentials, conversationIds, isRead);
     res.json({ emails });
 });
 
-app.post('/api/emails/send', async (req: Request, res: Response) => {
+app.post('/api/emails/send', async (req: express.Request, res: express.Response) => {
     const { data, user, conversationId, draftId } = req.body;
-    const { smtp, imap } = req.credentials!;
-    const emails = await mailService.sendEmail({ data, user, smtp, imap, conversationId, draftId });
+    const { credentials } = req.sessionData!;
+    const emails = await mailService.sendEmail({ data, user, credentials, conversationId, draftId });
     res.json({ emails });
 });
 
-app.post('/api/emails/draft', async (req: Request, res: Response) => {
+app.post('/api/emails/draft', async (req: express.Request, res: express.Response) => {
     const { data, user, conversationId, draftId } = req.body;
-    const { imap } = req.credentials!;
-    const { emails, newDraftId } = await mailService.saveDraft({ data, user, imap, conversationId, draftId });
+    const { credentials } = req.sessionData!;
+    const { emails, newDraftId } = await mailService.saveDraft({ data, user, credentials, conversationId, draftId });
     res.json({ emails, newDraftId });
 });
 
-app.delete('/api/emails/draft', async (req: Request, res: Response) => {
+app.delete('/api/emails/draft', async (req: express.Request, res: express.Response) => {
     const { draftId } = req.body;
-    const { imap } = req.credentials!;
-    const emails = await mailService.deleteDraft(imap, draftId);
+    const { credentials } = req.sessionData!;
+    const emails = await mailService.deleteDraft(credentials, draftId);
     res.json({ emails });
 });
 
 // Labels
-app.post('/api/labels', async (req: Request, res: Response) => {
+app.post('/api/labels', async (req: express.Request, res: express.Response) => {
     const { name, color } = req.body;
-    const { userId } = req.credentials!;
+    const { userId } = req.sessionData!;
     const labels = await dbService.createLabel(name, color, userId);
     res.json({ labels });
 });
 
-app.patch('/api/labels/:id', async (req: Request, res: Response) => {
+app.patch('/api/labels/:id', async (req: express.Request, res: express.Response) => {
     const { id } = req.params;
     const updates = req.body;
-    const { userId } = req.credentials!;
+    const { userId } = req.sessionData!;
     const labels = await dbService.updateLabel(id, updates, userId);
     res.json({ labels });
 });
 
-app.delete('/api/labels/:id', async (req: Request, res: Response) => {
+app.delete('/api/labels/:id', async (req: express.Request, res: express.Response) => {
     const { id: labelId } = req.params;
-    const { imap, userId } = req.credentials!;
+    const { credentials, userId } = req.sessionData!;
 
     const labelToDelete = await dbService.getLabelById(labelId, userId);
     if (!labelToDelete) {
@@ -249,130 +237,210 @@ app.delete('/api/labels/:id', async (req: Request, res: Response) => {
     }
     
     const labels = await dbService.deleteLabel(labelId, userId);
-    const emails = await mailService.removeLabelFromAllEmails(imap, labelToDelete.name);
+    const emails = await mailService.removeLabelFromAllEmails(credentials, labelToDelete.name);
     res.json({ labels, emails });
 });
 
 // Folders
-app.post('/api/folders', async (req: Request, res: Response) => {
+app.post('/api/folders', async (req: express.Request, res: express.Response) => {
     const { name } = req.body;
-    const { userId } = req.credentials!;
+    const { userId } = req.sessionData!;
     const folders = await dbService.createFolder(name, userId);
     res.json({ folders });
 });
 
-app.patch('/api/folders/:id', async (req: Request, res: Response) => {
+app.patch('/api/folders/:id', async (req: express.Request, res: express.Response) => {
     const { id } = req.params;
     const { newName } = req.body;
-    const { userId } = req.credentials!;
+    const { userId } = req.sessionData!;
     const folders = await dbService.updateFolder(id, newName, userId);
     res.json({ folders });
 });
 
-app.delete('/api/folders/:id', async (req: Request, res: Response) => {
+app.delete('/api/folders/:id', async (req: express.Request, res: express.Response) => {
     const { id } = req.params;
-    const { imap, userId } = req.credentials!;
+    const { credentials, userId } = req.sessionData!;
     const folderToDelete = await dbService.getFolderById(id, userId);
      if (!folderToDelete) {
         return res.status(404).json({ message: "Folder not found or you don't have permission." });
     }
 
     const folders = await dbService.deleteFolder(id, userId);
-    const emails = await mailService.moveEmailsFromFolder(imap, folderToDelete.name, 'Archive');
+    const emails = await mailService.moveEmailsFromFolder(credentials, folderToDelete.name, 'Archive');
     res.json({ folders, emails });
 });
 
+app.post('/api/folders/sync', async (req: express.Request, res: express.Response) => {
+    try {
+        const { credentials, userId } = req.sessionData!;
+        const imapFolders = await mailService.getImapFolders(credentials);
+        const userFolders = await dbService.reconcileFolders(userId, imapFolders);
+        res.json({ folders: userFolders });
+    } catch (error) {
+        console.error("Failed to sync folders:", error);
+        res.status(500).json({ message: "Failed to sync folders with mail server." });
+    }
+});
+
+app.patch('/api/folders/:id/subscription', async (req: express.Request, res: express.Response) => {
+    try {
+        const { id } = req.params;
+        const { isSubscribed } = req.body;
+        const { userId } = req.sessionData!;
+        const folders = await dbService.updateFolderSubscription(id, isSubscribed, userId);
+        res.json({ folders });
+    } catch (error) {
+        console.error("Failed to update folder subscription:", error);
+        res.status(500).json({ message: "Failed to update subscription." });
+    }
+});
+
 // Settings
-app.post('/api/settings', async (req: Request, res: Response) => {
-    const { userId } = req.credentials!;
+app.post('/api/settings', async (req: express.Request, res: express.Response) => {
+    const { userId } = req.sessionData!;
     const settings = await dbService.updateSettings(req.body, userId);
     res.json({ settings });
 });
 
+app.post('/api/onboarding', async (req: express.Request, res: express.Response) => {
+    const { userId } = req.sessionData!;
+    const onboardingData = req.body;
+    try {
+        const result = await dbService.completeOnboarding(userId, onboardingData);
+        res.json(result);
+    } catch (error) {
+        console.error("Onboarding failed:", error);
+        res.status(500).json({ message: "Failed to complete onboarding." });
+    }
+});
+
+app.patch('/api/settings/profile', async (req: express.Request, res: express.Response) => {
+    const { userId } = req.sessionData!;
+    const profileData = req.body;
+    try {
+        const settings = await dbService.updateProfileSettings(userId, profileData);
+        res.json({ settings });
+    } catch (error) {
+        console.error("Profile update failed:", error);
+        res.status(500).json({ message: "Failed to update profile." });
+    }
+});
+
+
 // Contacts & Groups
-app.post('/api/contacts', async (req: Request, res: Response) => {
+app.post('/api/contacts', async (req: express.Request, res: express.Response) => {
     const contactData = req.body;
-    const { userId } = req.credentials!;
+    const { userId } = req.sessionData!;
     const { contacts, newContactId } = await dbService.addContact(contactData, userId);
     res.json({ contacts, newContactId });
 });
 
-app.put('/api/contacts/:id', async (req: Request, res: Response) => {
+app.put('/api/contacts/:id', async (req: express.Request, res: express.Response) => {
     const { id } = req.params;
     const updatedContact = req.body;
-    const { userId } = req.credentials!;
+    const { userId } = req.sessionData!;
     const contacts = await dbService.updateContact(id, updatedContact, userId);
     res.json({ contacts });
 });
 
-app.delete('/api/contacts/:id', async (req: Request, res: Response) => {
+app.delete('/api/contacts/:id', async (req: express.Request, res: express.Response) => {
     const { id } = req.params;
-    const { userId } = req.credentials!;
+    const { userId } = req.sessionData!;
     const { contacts, groups } = await dbService.deleteContact(id, userId);
     res.json({ contacts, groups });
 });
 
-app.post('/api/contacts/import', async (req: Request, res: Response) => {
+app.post('/api/contacts/import', async (req: express.Request, res: express.Response) => {
     const { newContacts } = req.body;
-    const { userId } = req.credentials!;
+    const { userId } = req.sessionData!;
     const result = await dbService.importContacts(newContacts, userId);
     res.json(result);
 });
 
-app.post('/api/contact-groups', async (req: Request, res: Response) => {
+app.post('/api/contact-groups', async (req: express.Request, res: express.Response) => {
     const { name } = req.body;
-    const { userId } = req.credentials!;
+    const { userId } = req.sessionData!;
     const groups = await dbService.createContactGroup(name, userId);
     res.json({ groups });
 });
 
-app.patch('/api/contact-groups/:id', async (req: Request, res: Response) => {
+app.patch('/api/contact-groups/:id', async (req: express.Request, res: express.Response) => {
     const { id } = req.params;
     const { newName } = req.body;
-    const { userId } = req.credentials!;
+    const { userId } = req.sessionData!;
     const groups = await dbService.renameContactGroup(id, newName, userId);
     res.json({ groups });
 });
 
-app.delete('/api/contact-groups/:id', async (req: Request, res: Response) => {
+app.delete('/api/contact-groups/:id', async (req: express.Request, res: express.Response) => {
     const { id } = req.params;
-    const { userId } = req.credentials!;
+    const { userId } = req.sessionData!;
     const groups = await dbService.deleteContactGroup(id, userId);
     res.json({ groups });
 });
 
-app.post('/api/contact-groups/:id/members', async (req: Request, res: Response) => {
+app.post('/api/contact-groups/:id/members', async (req: express.Request, res: express.Response) => {
     const { id } = req.params;
     const { contactId } = req.body;
-    const { userId } = req.credentials!;
+    const { userId } = req.sessionData!;
     const groups = await dbService.addContactToGroup(id, contactId, userId);
     res.json({ groups });
 });
 
-app.delete('/api/contact-groups/:id/members/:contactId', async (req: Request, res: Response) => {
+app.delete('/api/contact-groups/:id/members/:contactId', async (req: express.Request, res: express.Response) => {
     const { id, contactId } = req.params;
-    const { userId } = req.credentials!;
+    const { userId } = req.sessionData!;
     const groups = await dbService.removeContactFromGroup(id, contactId, userId);
     res.json({ groups });
 });
 
 
 // --- Frontend Serving ---
-// This section must come AFTER all API routes
-
-// Get the directory name of the current module
 const __dirname = path.dirname(new URL(import.meta.url).pathname);
-// Serve static files from the React app's build directory
 const buildPath = path.resolve(__dirname, '..', 'dist');
 app.use(express.static(buildPath));
 
-// The "catchall" handler: for any request that doesn't match one above,
-// send back React's index.html file. This is crucial for client-side routing.
-app.get('*', (req: Request, res: Response) => {
+app.get('*', (req: express.Request, res: express.Response) => {
     res.sendFile(path.join(buildPath, 'index.html'));
 });
 
 // --- Server Startup ---
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server });
+
+wss.on('connection', async (ws, req) => {
+    const { query } = url.parse(req.url || '', true);
+    const token = query.token as string;
+    
+    if (!token) return ws.close(1008, 'Token required');
+
+    const session = await dbService.getSession(token);
+    if (!session || session.expiresAt.getTime() < Date.now()) {
+        return ws.close(1008, 'Invalid or expired token');
+    }
+    
+    const { userId } = session;
+    wsManager.add(userId, ws);
+
+    try {
+        const decryptedPassword = security.decrypt(session.encryptedCredentials);
+        const credentials = { user: session.user.email, pass: decryptedPassword };
+        imapManager.start(userId, credentials);
+    } catch (err) {
+        console.error(`[WebSocket] Failed to start IMAP session for user ${userId}`, err);
+        return ws.close(1011, 'Internal server error');
+    }
+
+    ws.on('close', () => {
+        wsManager.remove(userId);
+        imapManager.stop(userId);
+    });
+    
+    ws.on('error', (error) => {
+        console.error(`[WebSocket] Error for user ${userId}:`, error);
+    });
+});
+
 const startServer = async () => {
     await dbService.initDb();
     
@@ -380,39 +448,24 @@ const startServer = async () => {
     const PORT = process.env.PORT || 3001;
 
     if (SOCKET_PATH) {
-        // Production: Listen on UNIX socket
         const socketPath = path.resolve(SOCKET_PATH);
-
-        // Clean up old socket file if it exists
         if (fs.existsSync(socketPath)) {
-            console.log('Removing old socket file...');
             fs.unlinkSync(socketPath);
         }
-
-        const server = app.listen(socketPath, () => {
-            // Set permissions so the web server (e.g., Apache, Nginx) can access the socket
-            // 660 permissions: read/write for owner and group
+        server.listen(socketPath, () => {
             fs.chmodSync(socketPath, '660');
             console.log(`🚀 Backend server is listening on UNIX socket: ${socketPath}`);
         });
-
-        // Graceful shutdown to clean up the socket file
         const shutdown = () => {
-            console.log('Shutting down server...');
             server.close(() => {
-                console.log('Server closed. Removing socket file.');
-                if (fs.existsSync(socketPath)) {
-                    fs.unlinkSync(socketPath);
-                }
+                if (fs.existsSync(socketPath)) fs.unlinkSync(socketPath);
                 process.exit(0);
             });
         };
-
-        process.on('SIGTERM', shutdown); // For pm2, etc.
-        process.on('SIGINT', shutdown);  // For Ctrl+C
+        process.on('SIGTERM', shutdown);
+        process.on('SIGINT', shutdown);
     } else {
-        // Development: Listen on a network port
-        app.listen(PORT, () => {
+        server.listen(PORT, () => {
             console.log(`🚀 Backend server is running for development at http://localhost:${PORT}`);
         });
     }

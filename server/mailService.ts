@@ -1,12 +1,18 @@
 
+
 import nodemailer from 'nodemailer';
 import Imap from 'node-imap';
 import { simpleParser, ParsedMail, AddressObject } from 'mailparser';
 import sanitizeHtml from 'sanitize-html';
-import { Email, User, SystemFolder, SystemLabel } from '../types';
+import { Email, User, SystemFolder, SystemLabel } from '../src/types';
+
+export interface Credentials {
+    user: string;
+    pass: string;
+}
 
 // --- Connection Configurations ---
-const getImapConfig = (user: string, pass: string): Imap.Config => ({
+export const getImapConfig = (user: string, pass: string): Imap.Config => ({
     user,
     password: pass,
     // TODO: Replace with your actual IMAP server details
@@ -49,10 +55,9 @@ const openImapBox = (imap: Imap, boxName: string): Promise<Imap.Box> => {
     });
 };
 
-const mapParsedMailToEmail = (parsed: ParsedMail, seqno: number): Email => {
+export const mapParsedMailToEmail = (parsed: ParsedMail, seqno: number, boxName: string, flags: string[]): Email => {
     const conversationId = parsed.inReplyTo || parsed.messageId || `conv-${Date.now()}`;
     
-    // Sanitize the HTML body to prevent XSS attacks
     const unsafeBody = parsed.html || parsed.textAsHtml || '<p>No content</p>';
     const safeBody = sanitizeHtml(unsafeBody, {
         allowedTags: sanitizeHtml.defaults.allowedTags.concat([ 'img', 'h1', 'h2' ]),
@@ -70,6 +75,11 @@ const mapParsedMailToEmail = (parsed: ParsedMail, seqno: number): Email => {
         return addresses.map(a => a.address || '').filter(Boolean).join(', ');
     };
     
+    const labelIds = [];
+    if (flags.includes('\\Flagged')) {
+        labelIds.push(SystemLabel.STARRED);
+    }
+    
     return {
         id: parsed.messageId || `email-${seqno}`,
         conversationId: conversationId,
@@ -82,9 +92,9 @@ const mapParsedMailToEmail = (parsed: ParsedMail, seqno: number): Email => {
         body: safeBody,
         snippet: (parsed.text || '').substring(0, 100),
         timestamp: parsed.date?.toISOString() || new Date().toISOString(),
-        isRead: false, // This needs to be set from IMAP flags
-        folderId: 'Inbox', // This needs to be set from the mailbox name
-        labelIds: [], // This needs to be set from IMAP flags
+        isRead: flags.includes('\\Seen'),
+        folderId: boxName,
+        labelIds,
         attachments: parsed.attachments.map(att => ({
             fileName: att.filename || 'attachment',
             fileSize: att.size
@@ -94,12 +104,6 @@ const mapParsedMailToEmail = (parsed: ParsedMail, seqno: number): Email => {
 
 // --- Service Functions ---
 
-/**
- * Validates user credentials by attempting to log in. Connects and immediately disconnects.
- * @param user The user's email address.
- * @param pass The user's password.
- * @returns The user's profile information if successful.
- */
 export const login = async (user: string, pass: string): Promise<{name: string, email: string}> => {
     console.log(`MAIL SERVICE: Attempting to log in ${user}`);
     let imap;
@@ -117,48 +121,30 @@ export const login = async (user: string, pass: string): Promise<{name: string, 
     }
 };
 
-/**
- * Creates a persistent IMAP connection for the duration of a user session.
- * @param user The user's email address.
- * @param pass The user's password.
- * @returns A promise that resolves with the active IMAP connection object.
- */
-export const createImapConnection = (user: string, pass: string): Promise<Imap> => {
-    const config = getImapConfig(user, pass);
-    return connectImap(config);
-};
-
-/**
- * Creates a Nodemailer SMTP transport for sending emails.
- * @param user The user's email address.
- * @param pass The user's password.
- * @returns A Nodemailer Transporter object.
- */
-export const createSmtpTransport = (user: string, pass: string) => {
-    return nodemailer.createTransport(getSmtpConfig(user, pass));
-};
-
-
-export const getEmailsForUser = async (imap: Imap): Promise<Email[]> => {
-    console.log(`MAIL SERVICE: Fetching emails for user`);
+export const getEmailsForUser = async (credentials: Credentials): Promise<Email[]> => {
+    console.log(`MAIL SERVICE: Fetching emails for user ${credentials.user}`);
+    let imap: Imap | undefined;
     try {
+        imap = await connectImap(getImapConfig(credentials.user, credentials.pass));
         await openImapBox(imap, 'INBOX');
         
         return new Promise<Email[]>((resolve, reject) => {
             const fetchedEmails: Email[] = [];
-            const fetch = imap.seq.fetch('1:*', { bodies: '', struct: true });
+            const fetch = imap.seq.fetch('1:*', { bodies: '', struct: true, envelope: true });
             
             fetch.on('message', (msg, seqno) => {
                 let buffer = '';
+                let flags: string[] = [];
+                msg.on('attributes', (attrs) => {
+                    flags = attrs.flags;
+                });
                 msg.on('body', (stream) => {
-                    stream.on('data', (chunk) => {
-                        buffer += chunk.toString('utf8');
-                    });
+                    stream.on('data', (chunk) => { buffer += chunk.toString('utf8'); });
                 });
                 msg.once('end', async () => {
                     try {
                         const parsed = await simpleParser(buffer);
-                        const email = mapParsedMailToEmail(parsed, seqno);
+                        const email = mapParsedMailToEmail(parsed, seqno, 'Inbox', flags);
                         fetchedEmails.push(email);
                     } catch (parseError) {
                         console.error('Error parsing email:', parseError);
@@ -173,58 +159,117 @@ export const getEmailsForUser = async (imap: Imap): Promise<Email[]> => {
 
             fetch.once('end', () => {
                 console.log('Done fetching all messages!');
-                // Do not end the connection here, it's persistent
                 resolve(fetchedEmails);
             });
         });
-    } catch (error) {
-        // Do not end the connection here, let the main error handler in index.ts do it.
-        throw error;
+    } finally {
+        imap?.end();
     }
 };
 
-// Placeholder functions for other actions
-// These require significant logic to map conversation IDs back to IMAP message UIDs or sequence numbers.
-// A robust implementation would need a local cache or database to map our app's IDs to mail server UIDs.
-// For this example, we'll return a static empty array, but the structure is here.
+export const fetchEmailsByUIDs = (imap: Imap, uids: string[], boxName: string): Promise<Email[]> => {
+    return new Promise<Email[]>((resolve, reject) => {
+        if (uids.length === 0) {
+            return resolve([]);
+        }
+        const fetchedEmails: Email[] = [];
+        const fetch = imap.fetch(uids, { bodies: '', struct: true });
 
-export const moveConversations = async (imap: Imap, conversationIds: string[], targetFolderId: string): Promise<Email[]> => {
-    console.log(`MAIL SERVICE: Moving conversations ${conversationIds} to ${targetFolderId}`);
-    // TODO: Implement actual IMAP move logic.
-    return getEmailsForUser(imap); // Re-fetch emails to show changes
+        fetch.on('message', (msg, seqno) => {
+            let buffer = '';
+            let flags: string[] = [];
+            msg.on('attributes', (attrs) => {
+                flags = attrs.flags;
+            });
+            msg.on('body', stream => {
+                stream.on('data', chunk => { buffer += chunk.toString('utf8'); });
+            });
+            msg.once('end', async () => {
+                try {
+                    const parsed = await simpleParser(buffer);
+                    fetchedEmails.push(mapParsedMailToEmail(parsed, seqno, boxName, flags));
+                } catch (parseError) {
+                    console.error('Error parsing new email:', parseError);
+                }
+            });
+        });
+
+        fetch.once('error', reject);
+        fetch.once('end', () => resolve(fetchedEmails));
+    });
 };
 
-export const deleteConversationsPermanently = async (imap: Imap, conversationIds: string[]): Promise<Email[]> => {
+const flattenBoxes = (boxes: Imap.MailBoxes, prefix = ''): string[] => {
+    let folderList: string[] = [];
+    for (const name in boxes) {
+        if (Object.prototype.hasOwnProperty.call(boxes, name)) {
+            const box = boxes[name];
+            if (!box.attribs.includes('\\Noselect')) {
+                const fullPath = prefix ? `${prefix}${box.delimiter}${name}` : name;
+                folderList.push(fullPath);
+                if (box.children) {
+                    folderList = folderList.concat(flattenBoxes(box.children, fullPath));
+                }
+            }
+        }
+    }
+    return folderList;
+};
+
+export const getImapFolders = async (credentials: Credentials): Promise<string[]> => {
+    console.log(`MAIL SERVICE: Fetching IMAP folders for ${credentials.user}`);
+    let imap: Imap | undefined;
+    try {
+        imap = await connectImap(getImapConfig(credentials.user, credentials.pass));
+        const boxes = await new Promise<Imap.MailBoxes>((resolve, reject) => {
+            imap!.getBoxes((err, boxes) => {
+                if (err) return reject(err);
+                resolve(boxes);
+            });
+        });
+        return flattenBoxes(boxes);
+    } finally {
+        imap?.end();
+    }
+};
+
+export const moveConversations = async (credentials: Credentials, conversationIds: string[], targetFolderId: string): Promise<Email[]> => {
+    console.log(`MAIL SERVICE: Moving conversations ${conversationIds} to ${targetFolderId}`);
+    // TODO: Implement actual IMAP move logic within a single connection.
+    return getEmailsForUser(credentials); // Re-fetch emails to show changes
+};
+
+export const deleteConversationsPermanently = async (credentials: Credentials, conversationIds: string[]): Promise<Email[]> => {
     console.log(`MAIL SERVICE: Deleting conversations ${conversationIds}`);
     // TODO: Implement actual IMAP delete logic.
-    return getEmailsForUser(imap);
+    return getEmailsForUser(credentials);
 };
 
-export const toggleLabelOnConversations = async (imap: Imap, conversationIds: string[], labelName: string): Promise<Email[]> => {
+export const toggleLabelOnConversations = async (credentials: Credentials, conversationIds: string[], labelName: string): Promise<Email[]> => {
     console.log(`MAIL SERVICE: Toggling label ${labelName} on conversations ${conversationIds}`);
-    // TODO: Implement actual IMAP flag toggling. Starred is '\Flagged'. Custom labels are keywords.
-    return getEmailsForUser(imap);
+    // TODO: Implement actual IMAP flag toggling. Starred is '\\Flagged'. Custom labels are keywords.
+    return getEmailsForUser(credentials);
 };
 
-export const markConversationsAsRead = async (imap: Imap, conversationIds: string[], isRead: boolean): Promise<Email[]> => {
+export const markConversationsAsRead = async (credentials: Credentials, conversationIds: string[], isRead: boolean): Promise<Email[]> => {
     console.log(`MAIL SERVICE: Marking conversations ${conversationIds} as read: ${isRead}`);
-    // TODO: Implement actual IMAP flag setting for '\Seen'.
-    return getEmailsForUser(imap);
+    // TODO: Implement actual IMAP flag setting for '\\Seen'.
+    return getEmailsForUser(credentials);
 };
 
 interface SendEmailParams {
     data: { to: string; cc?: string; bcc?: string; subject: string; body: string; scheduleDate?: Date; attachments: File[] };
     user: User;
-    smtp: nodemailer.Transporter;
-    imap: Imap;
+    credentials: Credentials;
     conversationId?: string;
     draftId?: string;
 }
 
 export const sendEmail = async (params: SendEmailParams): Promise<Email[]> => {
-    const { data, user, smtp, imap } = params;
+    const { data, user, credentials } = params;
+    const smtp = nodemailer.createTransport(getSmtpConfig(credentials.user, credentials.pass));
     
-    console.log(`MAIL SERVICE: Sending email from ${user.email} to ${data.to}`);
+    console.log(`MAIL SERVICE: Sending email from ${user.name} <${user.email}> to ${data.to}`);
 
     try {
         await smtp.sendMail({
@@ -234,7 +279,6 @@ export const sendEmail = async (params: SendEmailParams): Promise<Email[]> => {
             bcc: data.bcc,
             subject: data.subject,
             html: data.body,
-            // attachments would be more complex, requiring file paths or buffers
         });
         console.log("Email sent successfully via Nodemailer.");
     } catch (error) {
@@ -242,39 +286,37 @@ export const sendEmail = async (params: SendEmailParams): Promise<Email[]> => {
         throw new Error("SMTP Error: Failed to send email.");
     }
     
-    // After sending, re-fetch emails to show the new sent item.
-    return getEmailsForUser(imap);
+    return getEmailsForUser(credentials);
 };
 
 interface DraftParams {
     data: SendEmailParams['data'];
     user: User;
-    imap: Imap;
+    credentials: Credentials;
     conversationId?: string;
     draftId?: string;
 }
 
 export const saveDraft = async (params: DraftParams): Promise<{ emails: Email[], newDraftId: string }> => {
-    // This would save the draft to the 'Drafts' folder on the IMAP server.
     console.log("MAIL SERVICE: Saving draft...");
     // TODO: Implement IMAP append to Drafts folder.
-    return { emails: await getEmailsForUser(params.imap), newDraftId: params.draftId || `draft-${Date.now()}` };
+    return { emails: await getEmailsForUser(params.credentials), newDraftId: params.draftId || `draft-${Date.now()}` };
 };
 
-export const deleteDraft = async (imap: Imap, draftId: string): Promise<Email[]> => {
+export const deleteDraft = async (credentials: Credentials, draftId: string): Promise<Email[]> => {
     console.log(`MAIL SERVICE: Deleting draft ${draftId}`);
     // TODO: Find draft by message-id and delete it.
-    return getEmailsForUser(imap);
+    return getEmailsForUser(credentials);
 };
 
-export const removeLabelFromAllEmails = async (imap: Imap, labelName: string): Promise<Email[]> => {
+export const removeLabelFromAllEmails = async (credentials: Credentials, labelName: string): Promise<Email[]> => {
     console.log(`MAIL SERVICE: Removing label (keyword) ${labelName} from all relevant emails.`);
     // TODO: Implement IMAP search for keyword and then remove it.
-    return getEmailsForUser(imap);
+    return getEmailsForUser(credentials);
 }
 
-export const moveEmailsFromFolder = async (imap: Imap, folderName: string, targetFolderName: string): Promise<Email[]> => {
+export const moveEmailsFromFolder = async (credentials: Credentials, folderName: string, targetFolderName: string): Promise<Email[]> => {
     console.log(`MAIL SERVICE: Moving emails from ${folderName} to ${targetFolderName}.`);
     // TODO: Implement IMAP search for box, then move all messages.
-    return getEmailsForUser(imap);
+    return getEmailsForUser(credentials);
 }

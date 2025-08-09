@@ -1,5 +1,6 @@
+
 import { Pool } from 'pg';
-import { AppSettings, Label, UserFolder, Contact, ContactGroup, User } from '../types';
+import { AppSettings, Label, UserFolder, Contact, ContactGroup, User } from '../src/types';
 import crypto from 'crypto';
 
 let db: Pool;
@@ -34,7 +35,9 @@ export async function initDb() {
         CREATE TABLE IF NOT EXISTS user_folders (
             id TEXT PRIMARY KEY,
             "userId" TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            name TEXT NOT NULL
+            name TEXT NOT NULL,
+            "isSubscribed" BOOLEAN NOT NULL DEFAULT TRUE,
+            source TEXT NOT NULL DEFAULT 'user'
         );
     `);
     await db.query(`
@@ -63,11 +66,21 @@ export async function initDb() {
             value JSONB NOT NULL
         );
     `);
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS sessions (
+            token TEXT PRIMARY KEY,
+            "userId" TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            "userPayload" JSONB NOT NULL,
+            "encryptedCredentials" TEXT NOT NULL,
+            "expiresAt" TIMESTAMPTZ NOT NULL
+        );
+    `);
+    await db.query('CREATE INDEX IF NOT EXISTS "sessions_expiresAt_idx" ON sessions ("expiresAt");');
     
     console.log("Database schema initialized.");
 }
 
-async function seedDataForNewUser(userId: string) {
+async function seedDataForNewUser(userId: string, userEmail: string) {
     console.log(`Seeding initial data for new user ${userId}`);
     // Seed Labels
     const initialLabels = [
@@ -82,7 +95,7 @@ async function seedDataForNewUser(userId: string) {
     // Seed Folders
     const initialFolders = [ { id: 'folder-1', name: 'Project Phoenix' } ];
     for (const folder of initialFolders) {
-        await db.query('INSERT INTO user_folders (id, "userId", name) VALUES ($1, $2, $3)', [`${folder.id}-${userId}`, userId, folder.name]);
+        await db.query('INSERT INTO user_folders (id, "userId", name, source, "isSubscribed") VALUES ($1, $2, $3, $4, $5)', [`${folder.id}-${userId}`, userId, folder.name, 'user', true]);
     }
     
     // Seed Settings
@@ -92,6 +105,10 @@ async function seedDataForNewUser(userId: string) {
         rules: [],
         sendDelay: { isEnabled: true, duration: 5 },
         language: 'en',
+        isOnboardingCompleted: false,
+        displayName: userEmail.split('@')[0],
+        profilePicture: '',
+        userType: 'person'
     };
     await db.query('INSERT INTO settings ("userId", value) VALUES ($1, $2)', [userId, initialSettings]);
 }
@@ -105,12 +122,53 @@ export const findOrCreateUser = async (email: string): Promise<User & {id: strin
         console.log(`Creating new user for ${email}`);
         const newId = `user-${crypto.randomBytes(16).toString('hex')}`;
         await db.query('INSERT INTO users (id, email) VALUES ($1, $2)', [newId, email]);
-        await seedDataForNewUser(newId);
-        user = { id: newId, email, name: email.split('@')[0] }; // name is transient, not in db
+        await seedDataForNewUser(newId, email);
+        const settings = await getAppSettings(newId);
+        user = { id: newId, email, name: settings.displayName, profilePicture: settings.profilePicture };
     } else {
-        user.name = user.email.split('@')[0];
+        const settings = await getAppSettings(user.id);
+        user.name = settings.displayName;
+        user.profilePicture = settings.profilePicture;
     }
     return user;
+};
+
+
+// --- Sessions ---
+export const createSession = async (token: string, userId: string, user: User, encryptedCredentials: string, ttl: number): Promise<void> => {
+    const expiresAt = new Date(Date.now() + ttl);
+    await db.query(
+        'INSERT INTO sessions (token, "userId", "userPayload", "encryptedCredentials", "expiresAt") VALUES ($1, $2, $3, $4, $5)',
+        [token, userId, user, encryptedCredentials, expiresAt]
+    );
+};
+
+export const getSession = async (token: string): Promise<{ userId: string, user: User, encryptedCredentials: string, expiresAt: Date } | null> => {
+    const res = await db.query('SELECT "userId", "userPayload", "encryptedCredentials", "expiresAt" FROM sessions WHERE token = $1', [token]);
+    if (res.rows.length === 0) return null;
+    const session = res.rows[0];
+    return {
+        userId: session.userId,
+        user: session.userPayload,
+        encryptedCredentials: session.encryptedCredentials,
+        expiresAt: new Date(session.expiresAt),
+    };
+};
+
+export const touchSession = async (token: string, ttl: number): Promise<void> => {
+    const newExpiresAt = new Date(Date.now() + ttl);
+    await db.query('UPDATE sessions SET "expiresAt" = $1 WHERE token = $2', [newExpiresAt, token]);
+};
+
+export const deleteSession = async (token: string): Promise<void> => {
+    await db.query('DELETE FROM sessions WHERE token = $1', [token]);
+};
+
+export const deleteExpiredSessions = async (): Promise<void> => {
+    const result = await db.query('DELETE FROM sessions WHERE "expiresAt" < NOW()');
+    if (result.rowCount > 0) {
+        console.log(`Cleaned up ${result.rowCount} expired sessions.`);
+    }
 };
 
 
@@ -142,7 +200,7 @@ export const deleteLabel = async (id: string, userId: string): Promise<Label[]> 
 
 // --- Folders ---
 export const getUserFolders = async (userId: string): Promise<UserFolder[]> => {
-    const res = await db.query('SELECT id, name, "userId" FROM user_folders WHERE "userId" = $1', [userId]);
+    const res = await db.query('SELECT id, name, "isSubscribed", source FROM user_folders WHERE "userId" = $1 ORDER BY name', [userId]);
     return res.rows;
 };
 export const getFolderById = async(id: string, userId: string): Promise<UserFolder | undefined> => {
@@ -152,7 +210,7 @@ export const getFolderById = async(id: string, userId: string): Promise<UserFold
 
 export const createFolder = async (name: string, userId: string): Promise<UserFolder[]> => {
     const newId = `folder-${Date.now()}`;
-    await db.query('INSERT INTO user_folders (id, "userId", name) VALUES ($1, $2, $3)', [newId, userId, name]);
+    await db.query('INSERT INTO user_folders (id, "userId", name, source, "isSubscribed") VALUES ($1, $2, $3, $4, $5)', [newId, userId, name, 'user', true]);
     return getUserFolders(userId);
 };
 
@@ -166,6 +224,48 @@ export const deleteFolder = async (id: string, userId: string): Promise<UserFold
     return getUserFolders(userId);
 };
 
+export const reconcileFolders = async (userId: string, imapFolders: string[]): Promise<UserFolder[]> => {
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+
+        const dbFoldersRes = await client.query('SELECT id, name, source FROM user_folders WHERE "userId" = $1', [userId]);
+        const dbFolders: { id: string; name: string; source: 'user' | 'imap' }[] = dbFoldersRes.rows;
+
+        const dbImapFolderNames = new Set(dbFolders.filter(f => f.source === 'imap').map(f => f.name));
+        const dbAllFolderNames = new Set(dbFolders.map(f => f.name));
+        const imapFolderNames = new Set(imapFolders);
+
+        // Add folders that are on IMAP but not in DB
+        for (const imapName of imapFolderNames) {
+            if (!dbAllFolderNames.has(imapName)) {
+                const newId = `folder-imap-${crypto.randomBytes(8).toString('hex')}`;
+                await client.query('INSERT INTO user_folders (id, "userId", name, source, "isSubscribed") VALUES ($1, $2, $3, $4, $5)', [newId, userId, imapName, 'imap', true]);
+            }
+        }
+
+        // Remove folders from DB that are sourced from IMAP but no longer exist there
+        for (const dbImapName of dbImapFolderNames) {
+            if (!imapFolderNames.has(dbImapName)) {
+                await client.query('DELETE FROM user_folders WHERE "userId" = $1 AND name = $2 AND source = $3', [userId, dbImapName, 'imap']);
+            }
+        }
+        
+        await client.query('COMMIT');
+    } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+    } finally {
+        client.release();
+    }
+    return getUserFolders(userId);
+};
+
+export const updateFolderSubscription = async (id: string, isSubscribed: boolean, userId: string): Promise<UserFolder[]> => {
+    await db.query('UPDATE user_folders SET "isSubscribed" = $1 WHERE id = $2 AND "userId" = $3', [isSubscribed, id, userId]);
+    return getUserFolders(userId);
+};
+
 // --- Settings ---
 export const getAppSettings = async (userId: string): Promise<AppSettings> => {
     const res = await db.query("SELECT value FROM settings WHERE \"userId\" = $1", [userId]);
@@ -173,8 +273,58 @@ export const getAppSettings = async (userId: string): Promise<AppSettings> => {
 };
 
 export const updateSettings = async (newSettings: AppSettings, userId: string): Promise<AppSettings> => {
-    await db.query("UPDATE settings SET value = $1 WHERE \"userId\" = $2", [newSettings, userId]);
+    await db.query('INSERT INTO settings ("userId", value) VALUES ($1, $2) ON CONFLICT ("userId") DO UPDATE SET value = $2', [userId, newSettings]);
     return getAppSettings(userId);
+};
+
+export const completeOnboarding = async (userId: string, data: Partial<AppSettings>): Promise<{ settings: AppSettings, contacts: Contact[] }> => {
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+
+        const currentSettingsRes = await client.query('SELECT value FROM settings WHERE "userId" = $1', [userId]);
+        const currentSettings = currentSettingsRes.rows[0]?.value || {};
+        
+        const updatedSettings: AppSettings = {
+            ...currentSettings,
+            ...data,
+            isOnboardingCompleted: true,
+        };
+        
+        await client.query('UPDATE settings SET value = $1 WHERE "userId" = $2', [JSON.stringify(updatedSettings), userId]);
+
+        const userEmailRes = await client.query('SELECT email FROM users WHERE id = $1', [userId]);
+        const userEmail = userEmailRes.rows[0].email;
+
+        const existingContactRes = await client.query('SELECT id FROM contacts WHERE "userId" = $1 AND email = $2', [userId, userEmail]);
+
+        if (existingContactRes.rows.length === 0) {
+            const newContactId = `contact-${Date.now()}`;
+            const contactName = updatedSettings.userType === 'company' ? updatedSettings.companyName : `${updatedSettings.firstName} ${updatedSettings.lastName}`.trim();
+            await client.query(
+                'INSERT INTO contacts (id, "userId", name, email, company, notes) VALUES ($1, $2, $3, $4, $5, $6)',
+                [newContactId, userId, contactName || updatedSettings.displayName, userEmail, updatedSettings.companyName, `Job Title: ${updatedSettings.jobTitle || ''}`.trim()]
+            );
+        }
+
+        await client.query('COMMIT');
+        
+        const settings = await getAppSettings(userId);
+        const contacts = await getContacts(userId);
+        return { settings, contacts };
+
+    } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+    } finally {
+        client.release();
+    }
+};
+
+export const updateProfileSettings = async (userId: string, data: { displayName: string, profilePicture?: string }): Promise<AppSettings> => {
+    const currentSettings = await getAppSettings(userId);
+    const updatedSettings = { ...currentSettings, ...data };
+    return await updateSettings(updatedSettings, userId);
 };
 
 // --- Contacts ---

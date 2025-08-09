@@ -1,11 +1,11 @@
+
 {
   "app": {
     "loading": "Cargando..."
   },
   "login": {
     "title": "Cliente de Webmail",
-    "subtitle": "Una demostración con datos de prueba.",
-    "subtext": "(Ingrese cualquier credencial no vacía)",
+    "subtitle": "Por favor, inicie sesión en su cuenta.",
     "emailLabel": "Dirección de correo",
     "passwordLabel": "Contraseña",
     "signInButton": "Iniciar sesión",
@@ -212,7 +212,9 @@
     "title": "Carpetas",
     "create": "Crear nueva carpeta",
     "noFolders": "No se han creado carpetas personalizadas.",
-    "confirmDelete": "¿Estás seguro de que quieres eliminar la carpeta \"{{name}}\"? Todos los correos dentro se moverán a Archivados."
+    "sync": "Sincronizar con Servidor",
+    "subscribed": "Suscrito",
+    "imapTag": "IMAP"
   },
   "contacts": {
     "title": "Contactos",
@@ -309,6 +311,9 @@
     "renameFolderFailed": "Error al renombrar la carpeta.",
     "folderDeleted": "Carpeta \"{{name}}\" eliminada. Su contenido se movió a Archivados.",
     "deleteFolderFailed": "Error al eliminar la carpeta.",
+    "foldersSynced": "Carpetas sincronizadas con el servidor de correo.",
+    "folderSyncFailed": "Error al sincronizar las carpetas.",
+    "subscriptionUpdateFailed": "Error al actualizar la suscripción de la carpeta.",
     "contactAdded": "Contacto añadido.",
     "addContactFailed": "Error al añadir contacto.",
     "contactUpdated": "Contacto actualizado.",

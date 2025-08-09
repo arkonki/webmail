@@ -1,5 +1,4 @@
 
-
 export enum SystemFolder {
   INBOX = 'Inbox',
   SENT = 'Sent',
@@ -40,6 +39,8 @@ export interface Label {
 export interface UserFolder {
   id: string;
   name: string;
+  isSubscribed: boolean;
+  source: 'user' | 'imap';
 }
 
 
@@ -78,7 +79,8 @@ export interface Conversation {
 
 export interface User {
     email: string;
-    name: string;
+    name: string; // This will become the display name
+    profilePicture?: string; // base64 encoded image
 }
 
 export interface Contact {
@@ -135,4 +137,13 @@ export interface AppSettings {
     duration: 5 | 10 | 20 | 30; // seconds
   };
   language: string;
+  // New onboarding and profile fields
+  isOnboardingCompleted: boolean;
+  displayName: string;
+  profilePicture?: string; // base64
+  userType?: 'person' | 'company';
+  firstName?: string;
+  lastName?: string;
+  companyName?: string;
+  jobTitle?: string;
 }

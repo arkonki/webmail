@@ -1,7 +1,7 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { MenuIcon } from './icons/MenuIcon';
-import { UserCircleIcon } from './icons/UserCircleIcon';
 import { MailIcon } from './icons/MailIcon';
 import { useAppContext } from '../context/AppContext';
 import { SunIcon } from './icons/SunIcon';
@@ -9,6 +9,7 @@ import { MoonIcon } from './icons/MoonIcon';
 import { CogIcon } from './icons/CogIcon';
 import { GlobeAltIcon } from './icons/GlobeAltIcon';
 import { supportedLanguages } from '../i18nConfig';
+import Avatar from './Avatar';
 
 const Header: React.FC = () => {
   const { user, theme, toggleTheme, toggleSidebar, view, setView, logout } = useAppContext();
@@ -71,8 +72,12 @@ const Header: React.FC = () => {
             <CogIcon className="w-6 h-6 text-gray-600 dark:text-gray-300" />
          </button>
          <div className="relative" ref={menuRef}>
-            <button onClick={() => setIsMenuOpen(prev => !prev)} className="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700">
-                <UserCircleIcon className="w-8 h-8 text-gray-600 dark:text-gray-300" />
+            <button onClick={() => setIsMenuOpen(prev => !prev)} className="rounded-full hover:ring-2 hover:ring-primary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2">
+                {user?.profilePicture ? (
+                    <img src={user.profilePicture} alt={user.name} className="w-8 h-8 rounded-full object-cover" />
+                ) : (
+                    <Avatar name={user?.name || ''} className="w-8 h-8" />
+                )}
             </button>
              <div className={`absolute right-0 w-56 mt-2 origin-top-right bg-white dark:bg-gray-800 rounded-md shadow-lg ring-1 ring-black dark:ring-gray-600 ring-opacity-5 transition-all duration-150 ${isMenuOpen ? 'opacity-100 visible scale-100' : 'opacity-0 invisible scale-95'}`}>
                 <div className="py-1">

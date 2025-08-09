@@ -13,14 +13,16 @@ This project is a complete, full-stack modern webmail client built with React, T
 - **Advanced Search**: Filter mail with search operators like `from:`, `is:starred`, etc.
 - **Contacts Management**: A full contacts book with support for creating contacts and groups.
 - **Persistent Settings**: Configure signatures, auto-responders, send-delay, and filtering rules.
-- **Live Backend API**: A Node.js/Express backend that serves a REST API.
+- **Stateless Backend API**: A Node.js/Express backend serves a REST API using a stateless architecture for high scalability.
 - **Persistent Database**: Uses **PostgreSQL** for robust, persistent storage of contacts, settings, labels, and folders.
+- **Persistent Sessions**: Database-backed sessions with encrypted credentials allow users to stay logged in across browser and server restarts.
 - **Real Mail Server Integration**: Connects to any standard IMAP/SMTP server for mail operations.
 - **Dark Mode**: A sleek dark theme that respects system preferences.
+- **Internationalization (i18n)**: Supports multiple languages (English, Spanish, Estonian) with a flexible translation system.
 
 ## Tech Stack
 
-- **Frontend**: React, TypeScript, Tailwind CSS, Vite
+- **Frontend**: React, TypeScript, Tailwind CSS, Vite, `i18next`
 - **Backend**: Node.js, Express.js, `sanitize-html`, `helmet`
 - **Database**: PostgreSQL (via `pg` client)
 - **Mail Protocols**: `node-imap` for IMAP, `nodemailer` for SMTP
@@ -59,9 +61,11 @@ Follow these instructions to get the project running on your local machine for d
 4.  **Configure Environment Variables:**
     - Create a file named `.env` in the root of the project directory.
     - Add the connection string for your new database to this file. Replace the username, password, and database name as needed.
+    - **Crucially**, you must also add a secret encryption key. This should be a 64-character hexadecimal string. You can generate one with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
       ```
       # .env
       DATABASE_URL="postgresql://YOUR_USER:YOUR_PASSWORD@localhost:5432/webmail"
+      ENCRYPTION_KEY="YOUR_GENERATED_64_CHARACTER_HEX_STRING"
       ```
 
 5.  **Configure the Mail Server:**
@@ -116,7 +120,7 @@ This project is configured to be deployed as a single, self-contained applicatio
     npm install
     ```
     
-2.  **Configure Environment**: Ensure the `DATABASE_URL` environment variable is set on your server, pointing to your production PostgreSQL database.
+2.  **Configure Environment**: Ensure the `DATABASE_URL` and `ENCRYPTION_KEY` environment variables are set on your server, pointing to your production PostgreSQL database and your secret key.
 
 3.  **Build and Start the Server**: Use the `start` script. For production, it's highly recommended to use a process manager like `pm2` and a UNIX socket (see below).
     ```bash
@@ -136,7 +140,7 @@ This project is configured to be deployed as a single, self-contained applicatio
         
         # Start the app, pointing to a socket file.
         # Ensure the directory exists and your user has permissions to write to it.
-        # The DATABASE_URL must also be available in the environment.
+        # The DATABASE_URL and ENCRYPTION_KEY must also be available in the environment.
         SOCKET_PATH="/var/run/webmail.socket" pm2 start "npm run start" --name webmail-client
         ```
     
@@ -222,9 +226,11 @@ This project is configured to be deployed as a single, self-contained applicatio
 
 Security is a critical aspect of this application, especially since it handles user credentials. The following measures have been implemented:
 
-- **Data Isolation**: The backend architecture is now fully multi-tenant. All data (contacts, labels, settings, etc.) is scoped by a `userId`. The API enforces that a logged-in user can **only** access or modify their own data. This is a critical protection against Insecure Direct Object Reference (IDOR) vulnerabilities.
+- **Data Isolation**: The backend architecture is fully multi-tenant. All data (contacts, labels, settings, etc.) is scoped by a `userId`. The API enforces that a logged-in user can **only** access or modify their own data. This is a critical protection against Insecure Direct Object Reference (IDOR) vulnerabilities.
 
-- **Stateless Password Handling**: User passwords are **never** stored on the server. They are used only once during the initial login to establish persistent, authenticated IMAP and SMTP connections for the user's session. The password is then immediately discarded.
+- **Stateless Architecture**: The server does not maintain persistent connections or state for users between requests. Each API request is self-contained, using a session token to retrieve encrypted credentials from the database, perform the mail server operation, and then immediately discard the credentials and connection. This model is highly scalable and robust against server restarts.
+
+- **Encrypted Credentials at Rest**: User mail server passwords are **never** stored in plaintext. Upon login, the password is encrypted with AES-256-GCM and stored in the session table in the database. It is decrypted only in memory for the brief duration of an API call that requires it. This is protected by a secret `ENCRYPTION_KEY` that must be set in your server environment.
 
 - **HTTP Security Headers**: The `helmet` library is used to set various HTTP headers that protect against common web vulnerabilities like clickjacking, MIME-sniffing, and certain types of XSS attacks.
 

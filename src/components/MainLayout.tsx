@@ -8,9 +8,10 @@ import ComposeModal from './ComposeModal';
 import Settings from './Settings';
 import ContactsView from './ContactsView';
 import { useAppContext } from '../context/AppContext';
+import OnboardingModal from './OnboardingModal';
 
 const MainLayout: React.FC = () => {
-  const { composeState, handleEscape, view, isSidebarCollapsed, navigateConversationList, selectedConversationId, openFocusedConversation } = useAppContext();
+  const { user, appSettings, composeState, handleEscape, view, isSidebarCollapsed, navigateConversationList, selectedConversationId, openFocusedConversation } = useAppContext();
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -62,9 +63,12 @@ const MainLayout: React.FC = () => {
         return renderMailView();
     }
   };
+  
+  const showOnboarding = user && !appSettings.isOnboardingCompleted;
 
   return (
     <div className="flex flex-col h-screen bg-surface dark:bg-dark-surface text-on-surface dark:text-dark-on-surface">
+      {showOnboarding && <OnboardingModal />}
       <Header />
       <div className="flex flex-grow overflow-hidden">
         <Sidebar />
