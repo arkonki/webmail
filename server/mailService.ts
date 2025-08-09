@@ -20,7 +20,9 @@ export const getImapConfig = (user: string, pass: string): Imap.Config => ({
     port: 993,
     tls: true,
     tlsOptions: {
-        rejectUnauthorized: false // Use true in production with a valid certificate
+        // CRITICAL: This MUST be true in production to prevent Man-in-the-Middle attacks.
+        // It is only disabled in development to allow for self-signed certificates.
+        rejectUnauthorized: process.env.NODE_ENV === 'development' ? false : true
     }
 });
 
@@ -32,6 +34,10 @@ const getSmtpConfig = (user: string, pass: string) => ({
     auth: {
         user: user,
         pass: pass
+    },
+    tls: {
+        // CRITICAL: This MUST be true in production.
+        rejectUnauthorized: process.env.NODE_ENV === 'development' ? false : true
     }
 });
 
