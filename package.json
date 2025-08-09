@@ -7,9 +7,11 @@
   "scripts": {
     "dev": "vite",
     "serve": "vite-node server/index.ts",
-    "build": "vite build",
-    "start": "npm run build && vite-node server/index.ts"
-  },
+    "build:client": "vite build",
+    "build:server": "tsc --project tsconfig.server.json",
+    "build": "npm run build:client && npm run build:server",
+    "start": "node dist/server/index.js"
+    },
   "keywords": [
     "react",
     "tailwind",
