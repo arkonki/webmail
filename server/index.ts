@@ -11,13 +11,13 @@ import url from 'url';
 import rateLimit from 'express-rate-limit';
 import process from 'process';
 
-import * as mailService from './mailService';
-import * as dbService from './databaseService';
-import * as security from './security';
-import { User } from '../src/types';
+import * as mailService from './mailService.js';
+import * as dbService from './databaseService.js';
+import * as security from './security.js';
+import { User } from '../src/types.ts';
 import crypto from 'crypto';
-import * as wsManager from './wsManager';
-import * as imapManager from './imapManager';
+import * as wsManager from './wsManager.js';
+import * as imapManager from './imapManager.js';
 
 declare global {
   namespace Express {
