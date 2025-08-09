@@ -7,35 +7,40 @@
 <script type="importmap">
 {
   "imports": {
-    "react": "https://esm.sh/react@^19.1.1",
-    "react-dom/": "https://esm.sh/react-dom@^19.1.1/",
-    "react/": "https://esm.sh/react@^19.1.1/",
-    "react-i18next": "https://esm.sh/react-i18next@^15.6.1",
-    "react-dom": "https://esm.sh/react-dom@^19.1.1",
-    "vite": "https://esm.sh/vite@^7.1.1",
     "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.0.0",
-    "express": "https://esm.sh/express@^5.1.0",
+    "vite": "https://esm.sh/vite@^7.1.1",
     "cors": "https://esm.sh/cors@^2.8.5",
-    "helmet": "https://esm.sh/helmet@^8.1.0",
     "path": "https://esm.sh/path@^0.12.7",
+    "react": "https://esm.sh/react@^19.1.1",
+    "react/": "https://esm.sh/react@^19.1.1/",
+    "express": "https://esm.sh/express@^5.1.0",
     "crypto": "https://esm.sh/crypto@^1.0.1",
-    "nodemailer": "https://esm.sh/nodemailer@^7.0.5",
-    "node-imap": "https://esm.sh/node-imap@^0.9.6",
+    "react-dom/": "https://esm.sh/react-dom@^19.1.1/",
+    "react-dom": "https://esm.sh/react-dom@^19.1.1",
+    "i18next": "https://esm.sh/i18next@^25.3.2",
+    "react-i18next": "https://esm.sh/react-i18next@^15.6.1",
+    "i18next-http-backend": "https://esm.sh/i18next-http-backend@^3.0.2",
+    "i18next-browser-languagedetector": "https://esm.sh/i18next-browser-languagedetector@^8.2.0",
+    "helmet": "https://esm.sh/helmet@^8.1.0",
+    "sqlite3": "https://esm.sh/sqlite3@^5.1.7",
     "mailparser": "https://esm.sh/mailparser@^3.7.4",
     "sanitize-html": "https://esm.sh/sanitize-html@^2.17.0",
+    "nodemailer": "https://esm.sh/nodemailer@^7.0.5",
+    "node-imap": "https://esm.sh/node-imap@^0.9.6",
     "sqlite": "https://esm.sh/sqlite@^5.1.1",
-    "sqlite3": "https://esm.sh/sqlite3@^5.1.7",
-    "i18next": "https://esm.sh/i18next@^25.3.2",
-    "i18next-http-backend": "https://esm.sh/i18next-http-backend@^3.0.2",
-    "i18next-browser-languagedetector": "https://esm.sh/i18next-browser-languagedetector@^8.2.0"
+    "pg": "https://esm.sh/pg@^8.16.3",
+    "process": "https://esm.sh/process@^0.11.10",
+    "fs": "https://esm.sh/fs@^0.0.1-security"
   }
 }
 </script>
+<link rel="stylesheet" href="/index.css">
 </head>
   <body class="bg-surface text-on-surface dark:bg-dark-surface dark:text-dark-on-surface antialiased">
     <div id="root"></div>
     <div id="modal-portal"></div>
     <div id="toast-container" class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2"></div>
     <script type="module" src="/src/index.tsx"></script>
-  </body>
+  <script type="module" src="/index.tsx"></script>
+</body>
 </html>

@@ -1,60 +1,66 @@
-import { Database } from 'sqlite';
-import sqlite3 from 'sqlite3';
-import { open } from 'sqlite';
+import { Pool } from 'pg';
 import { AppSettings, Label, UserFolder, Contact, ContactGroup, User } from '../types';
 import crypto from 'crypto';
 
-let db: Database;
+let db: Pool;
 
 export async function initDb() {
-    db = await open({
-        filename: './data/app.db',
-        driver: sqlite3.Database
+    if (!process.env.DATABASE_URL) {
+        throw new Error("DATABASE_URL environment variable is not set. Please provide a PostgreSQL connection string.");
+    }
+
+    db = new Pool({
+        connectionString: process.env.DATABASE_URL,
     });
 
-    console.log("Database connected.");
-    await db.exec('PRAGMA foreign_keys = ON;');
+    db.on('connect', () => console.log("Database connected."));
+    db.on('error', (err) => console.error("Database pool error:", err));
 
-    await db.exec(`
+    await db.query(`
         CREATE TABLE IF NOT EXISTS users (
             id TEXT PRIMARY KEY,
             email TEXT NOT NULL UNIQUE
         );
+    `);
+    await db.query(`
         CREATE TABLE IF NOT EXISTS labels (
             id TEXT PRIMARY KEY,
-            userId TEXT NOT NULL,
+            "userId" TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             name TEXT NOT NULL,
-            color TEXT NOT NULL,
-            FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+            color TEXT NOT NULL
         );
+    `);
+    await db.query(`
         CREATE TABLE IF NOT EXISTS user_folders (
             id TEXT PRIMARY KEY,
-            userId TEXT NOT NULL,
-            name TEXT NOT NULL,
-            FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+            "userId" TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            name TEXT NOT NULL
         );
+    `);
+    await db.query(`
         CREATE TABLE IF NOT EXISTS contacts (
             id TEXT PRIMARY KEY,
-            userId TEXT NOT NULL,
+            "userId" TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             name TEXT NOT NULL,
             email TEXT NOT NULL,
             phone TEXT,
             company TEXT,
             notes TEXT,
-            FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE,
-            UNIQUE(userId, email)
+            UNIQUE("userId", email)
         );
+    `);
+    await db.query(`
         CREATE TABLE IF NOT EXISTS contact_groups (
             id TEXT PRIMARY KEY,
-            userId TEXT NOT NULL,
+            "userId" TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             name TEXT NOT NULL,
-            contactIds TEXT NOT NULL, -- Storing as JSON array
-            FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+            "contactIds" JSONB NOT NULL DEFAULT '[]'
         );
+    `);
+    await db.query(`
         CREATE TABLE IF NOT EXISTS settings (
-            userId TEXT PRIMARY KEY,
-            value TEXT NOT NULL,
-            FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+            "userId" TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            value JSONB NOT NULL
         );
     `);
     
@@ -69,19 +75,15 @@ async function seedDataForNewUser(userId: string) {
         { id: 'label-2', name: 'Receipts', color: '#2ecc71' },
         { id: 'label-3', name: 'Work', color: '#e74c3c' },
     ];
-    const labelStmt = await db.prepare('INSERT INTO labels (id, userId, name, color) VALUES (?, ?, ?, ?)');
     for (const label of initialLabels) {
-        await labelStmt.run(`${label.id}-${userId}`, userId, label.name, label.color);
+        await db.query('INSERT INTO labels (id, "userId", name, color) VALUES ($1, $2, $3, $4)', [`${label.id}-${userId}`, userId, label.name, label.color]);
     }
-    await labelStmt.finalize();
 
     // Seed Folders
     const initialFolders = [ { id: 'folder-1', name: 'Project Phoenix' } ];
-    const folderStmt = await db.prepare('INSERT INTO user_folders (id, userId, name) VALUES (?, ?, ?)');
     for (const folder of initialFolders) {
-        await folderStmt.run(`${folder.id}-${userId}`, userId, folder.name);
+        await db.query('INSERT INTO user_folders (id, "userId", name) VALUES ($1, $2, $3)', [`${folder.id}-${userId}`, userId, folder.name]);
     }
-    await folderStmt.finalize();
     
     // Seed Settings
     const initialSettings: AppSettings = {
@@ -91,16 +93,18 @@ async function seedDataForNewUser(userId: string) {
         sendDelay: { isEnabled: true, duration: 5 },
         language: 'en',
     };
-    await db.run('INSERT INTO settings (userId, value) VALUES (?, ?)', userId, JSON.stringify(initialSettings));
+    await db.query('INSERT INTO settings ("userId", value) VALUES ($1, $2)', [userId, initialSettings]);
 }
 
 // --- User Management ---
 export const findOrCreateUser = async (email: string): Promise<User & {id: string}> => {
-    let user = await db.get<User & {id: string}>('SELECT * FROM users WHERE email = ?', email);
+    let result = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+    let user = result.rows[0];
+
     if (!user) {
         console.log(`Creating new user for ${email}`);
         const newId = `user-${crypto.randomBytes(16).toString('hex')}`;
-        await db.run('INSERT INTO users (id, email) VALUES (?, ?)', newId, email);
+        await db.query('INSERT INTO users (id, email) VALUES ($1, $2)', [newId, email]);
         await seedDataForNewUser(newId);
         user = { id: newId, email, name: email.split('@')[0] }; // name is transient, not in db
     } else {
@@ -111,80 +115,95 @@ export const findOrCreateUser = async (email: string): Promise<User & {id: strin
 
 
 // --- Labels ---
-export const getLabels = async (userId: string): Promise<Label[]> => db.all('SELECT * FROM labels WHERE userId = ?', userId);
-export const getLabelById = async (id: string, userId: string): Promise<Label | undefined> => db.get('SELECT * FROM labels WHERE id = ? AND userId = ?', id, userId);
+export const getLabels = async (userId: string): Promise<Label[]> => {
+    const res = await db.query('SELECT id, name, color, "userId" FROM labels WHERE "userId" = $1', [userId]);
+    return res.rows;
+};
+export const getLabelById = async (id: string, userId: string): Promise<Label | undefined> => {
+    const res = await db.query('SELECT * FROM labels WHERE id = $1 AND "userId" = $2', [id, userId]);
+    return res.rows[0];
+}
 
 export const createLabel = async (name: string, color: string, userId: string): Promise<Label[]> => {
     const newId = `label-${Date.now()}`;
-    await db.run('INSERT INTO labels (id, userId, name, color) VALUES (?, ?, ?, ?)', newId, userId, name, color);
+    await db.query('INSERT INTO labels (id, "userId", name, color) VALUES ($1, $2, $3, $4)', [newId, userId, name, color]);
     return getLabels(userId);
 };
 
 export const updateLabel = async (id: string, updates: Partial<Omit<Label, 'id'>>, userId: string): Promise<Label[]> => {
-    await db.run('UPDATE labels SET name = ?, color = ? WHERE id = ? AND userId = ?', updates.name, updates.color, id, userId);
+    await db.query('UPDATE labels SET name = $1, color = $2 WHERE id = $3 AND "userId" = $4', [updates.name, updates.color, id, userId]);
     return getLabels(userId);
 };
 
 export const deleteLabel = async (id: string, userId: string): Promise<Label[]> => {
-    await db.run('DELETE FROM labels WHERE id = ? AND userId = ?', id, userId);
+    await db.query('DELETE FROM labels WHERE id = $1 AND "userId" = $2', [id, userId]);
     return getLabels(userId);
 };
 
 // --- Folders ---
-export const getUserFolders = async (userId: string): Promise<UserFolder[]> => db.all('SELECT * FROM user_folders WHERE userId = ?', userId);
-export const getFolderById = async(id: string, userId: string): Promise<UserFolder | undefined> => db.get('SELECT * FROM user_folders WHERE id = ? AND userId = ?', id, userId);
+export const getUserFolders = async (userId: string): Promise<UserFolder[]> => {
+    const res = await db.query('SELECT id, name, "userId" FROM user_folders WHERE "userId" = $1', [userId]);
+    return res.rows;
+};
+export const getFolderById = async(id: string, userId: string): Promise<UserFolder | undefined> => {
+    const res = await db.query('SELECT * FROM user_folders WHERE id = $1 AND "userId" = $2', [id, userId]);
+    return res.rows[0];
+};
 
 export const createFolder = async (name: string, userId: string): Promise<UserFolder[]> => {
     const newId = `folder-${Date.now()}`;
-    await db.run('INSERT INTO user_folders (id, userId, name) VALUES (?, ?, ?)', newId, userId, name);
+    await db.query('INSERT INTO user_folders (id, "userId", name) VALUES ($1, $2, $3)', [newId, userId, name]);
     return getUserFolders(userId);
 };
 
 export const updateFolder = async (id: string, newName: string, userId: string): Promise<UserFolder[]> => {
-    await db.run('UPDATE user_folders SET name = ? WHERE id = ? AND userId = ?', newName, id, userId);
+    await db.query('UPDATE user_folders SET name = $1 WHERE id = $2 AND "userId" = $3', [newName, id, userId]);
     return getUserFolders(userId);
 };
 
 export const deleteFolder = async (id: string, userId: string): Promise<UserFolder[]> => {
-    await db.run('DELETE FROM user_folders WHERE id = ? AND userId = ?', id, userId);
+    await db.query('DELETE FROM user_folders WHERE id = $1 AND "userId" = $2', [id, userId]);
     return getUserFolders(userId);
 };
 
 // --- Settings ---
 export const getAppSettings = async (userId: string): Promise<AppSettings> => {
-    const row = await db.get("SELECT value FROM settings WHERE userId = ?", userId);
-    return row ? JSON.parse(row.value) : {};
+    const res = await db.query("SELECT value FROM settings WHERE \"userId\" = $1", [userId]);
+    return res.rows[0]?.value || {};
 };
 
 export const updateSettings = async (newSettings: AppSettings, userId: string): Promise<AppSettings> => {
-    await db.run("UPDATE settings SET value = ? WHERE userId = ?", JSON.stringify(newSettings), userId);
+    await db.query("UPDATE settings SET value = $1 WHERE \"userId\" = $2", [newSettings, userId]);
     return getAppSettings(userId);
 };
 
 // --- Contacts ---
-export const getContacts = async (userId: string): Promise<Contact[]> => db.all('SELECT * FROM contacts WHERE userId = ?', userId);
+export const getContacts = async (userId: string): Promise<Contact[]> => {
+    const res = await db.query('SELECT * FROM contacts WHERE "userId" = $1', [userId]);
+    return res.rows;
+};
 
 export const addContact = async (contactData: Omit<Contact, 'id'>, userId: string): Promise<{ contacts: Contact[], newContactId: string }> => {
     const newId = `contact-${Date.now()}`;
-    await db.run('INSERT INTO contacts (id, userId, name, email, phone, company, notes) VALUES (?, ?, ?, ?, ?, ?, ?)', newId, userId, contactData.name, contactData.email, contactData.phone, contactData.company, contactData.notes);
+    await db.query('INSERT INTO contacts (id, "userId", name, email, phone, company, notes) VALUES ($1, $2, $3, $4, $5, $6, $7)', [newId, userId, contactData.name, contactData.email, contactData.phone, contactData.company, contactData.notes]);
     const newContacts = await getContacts(userId);
     return { contacts: newContacts, newContactId: newId };
 };
 
 export const updateContact = async (id: string, updatedContactData: Contact, userId: string): Promise<Contact[]> => {
-    await db.run('UPDATE contacts SET name=?, email=?, phone=?, company=?, notes=? WHERE id=? AND userId = ?', updatedContactData.name, updatedContactData.email, updatedContactData.phone, updatedContactData.company, updatedContactData.notes, id, userId);
+    await db.query('UPDATE contacts SET name=$1, email=$2, phone=$3, company=$4, notes=$5 WHERE id=$6 AND "userId" = $7', [updatedContactData.name, updatedContactData.email, updatedContactData.phone, updatedContactData.company, updatedContactData.notes, id, userId]);
     return getContacts(userId);
 };
 
 export const deleteContact = async (contactId: string, userId: string): Promise<{ contacts: Contact[], groups: ContactGroup[] }> => {
-    await db.run('DELETE FROM contacts WHERE id = ? AND userId = ?', contactId, userId);
+    await db.query('DELETE FROM contacts WHERE id = $1 AND "userId" = $2', [contactId, userId]);
     // Remove contact from any groups it was in
     const groups = await getContactGroups(userId);
     for (const group of groups) {
         const initialCount = group.contactIds.length;
         group.contactIds = group.contactIds.filter(id => id !== contactId);
         if (group.contactIds.length < initialCount) {
-            await db.run('UPDATE contact_groups SET contactIds = ? WHERE id = ? AND userId = ?', JSON.stringify(group.contactIds), group.id, userId);
+            await db.query('UPDATE contact_groups SET "contactIds" = $1 WHERE id = $2 AND "userId" = $3', [JSON.stringify(group.contactIds), group.id, userId]);
         }
     }
     const contacts = await getContacts(userId);
@@ -198,57 +217,57 @@ export const importContacts = async (newContacts: Omit<Contact, 'id'>[], userId:
     const existingUserContacts = await getContacts(userId);
     const existingEmails = new Set(existingUserContacts.map(c => c.email.toLowerCase()));
 
-    const stmt = await db.prepare('INSERT INTO contacts (id, userId, name, email) VALUES (?, ?, ?, ?)');
     for (const newContact of newContacts) {
         if (!existingEmails.has(newContact.email.toLowerCase())) {
-            await stmt.run(`contact-${Date.now()}-${importedCount}`, userId, newContact.name, newContact.email);
+            await db.query('INSERT INTO contacts (id, "userId", name, email) VALUES ($1, $2, $3, $4)', [`contact-${Date.now()}-${importedCount}`, userId, newContact.name, newContact.email]);
             importedCount++;
         } else {
             skippedCount++;
         }
     }
-    await stmt.finalize();
     const updatedContacts = await getContacts(userId);
     return { contacts: updatedContacts, importedCount, skippedCount };
 };
 
 // --- Contact Groups ---
 export const getContactGroups = async (userId: string): Promise<ContactGroup[]> => {
-    const groups = await db.all<{id: string, name: string, contactIds: string}[]>('SELECT id, name, contactIds FROM contact_groups WHERE userId = ?', userId);
-    return groups.map(g => ({...g, contactIds: JSON.parse(g.contactIds)}));
+    const res = await db.query('SELECT id, name, "contactIds" FROM contact_groups WHERE "userId" = $1', [userId]);
+    return res.rows;
 };
 
 export const createContactGroup = async (name: string, userId: string): Promise<ContactGroup[]> => {
-    await db.run('INSERT INTO contact_groups (id, userId, name, contactIds) VALUES (?, ?, ?, ?)', `group-${Date.now()}`, userId, name, '[]');
+    await db.query('INSERT INTO contact_groups (id, "userId", name, "contactIds") VALUES ($1, $2, $3, $4)', [`group-${Date.now()}`, userId, name, '[]']);
     return getContactGroups(userId);
 };
 
 export const renameContactGroup = async (groupId: string, newName: string, userId: string): Promise<ContactGroup[]> => {
-    await db.run('UPDATE contact_groups SET name = ? WHERE id = ? AND userId = ?', newName, groupId, userId);
+    await db.query('UPDATE contact_groups SET name = $1 WHERE id = $2 AND "userId" = $3', [newName, groupId, userId]);
     return getContactGroups(userId);
 };
 
 export const deleteContactGroup = async (groupId: string, userId: string): Promise<ContactGroup[]> => {
-    await db.run('DELETE FROM contact_groups WHERE id = ? AND userId = ?', groupId, userId);
+    await db.query('DELETE FROM contact_groups WHERE id = $1 AND "userId" = $2', [groupId, userId]);
     return getContactGroups(userId);
 };
 
 export const addContactToGroup = async (groupId: string, contactId: string, userId: string): Promise<ContactGroup[]> => {
-    const group = await db.get('SELECT contactIds FROM contact_groups WHERE id = ? AND userId = ?', groupId, userId);
+    const res = await db.query('SELECT "contactIds" FROM contact_groups WHERE id = $1 AND "userId" = $2', [groupId, userId]);
+    const group = res.rows[0];
     if(group) {
-        const contactIds = new Set(JSON.parse(group.contactIds));
+        const contactIds = new Set(group.contactIds);
         contactIds.add(contactId);
-        await db.run('UPDATE contact_groups SET contactIds = ? WHERE id = ?', JSON.stringify(Array.from(contactIds)), groupId);
+        await db.query('UPDATE contact_groups SET "contactIds" = $1 WHERE id = $2', [JSON.stringify(Array.from(contactIds)), groupId]);
     }
     return getContactGroups(userId);
 };
 
 export const removeContactFromGroup = async (groupId: string, contactId: string, userId: string): Promise<ContactGroup[]> => {
-    const group = await db.get('SELECT contactIds FROM contact_groups WHERE id = ? AND userId = ?', groupId, userId);
+    const res = await db.query('SELECT "contactIds" FROM contact_groups WHERE id = $1 AND "userId" = $2', [groupId, userId]);
+    const group = res.rows[0];
     if(group) {
-        let contactIds: string[] = JSON.parse(group.contactIds);
+        let contactIds: string[] = group.contactIds;
         contactIds = contactIds.filter(id => id !== contactId);
-        await db.run('UPDATE contact_groups SET contactIds = ? WHERE id = ?', JSON.stringify(contactIds), groupId);
+        await db.query('UPDATE contact_groups SET "contactIds" = $1 WHERE id = $2', [JSON.stringify(contactIds), groupId]);
     }
     return getContactGroups(userId);
 };

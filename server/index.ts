@@ -1,13 +1,16 @@
-import express from 'express';
+
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import path from 'path';
+import fs from 'fs';
 import * as mailService from './mailService';
 import * as dbService from './databaseService';
 import { User } from '../types';
 import crypto from 'crypto';
 import { Transporter } from 'nodemailer';
 import Imap from 'node-imap';
+import process from 'process';
 
 declare global {
   namespace Express {
@@ -23,7 +26,7 @@ declare global {
 }
 
 const app = express();
-const PORT = 3001;
+
 
 // --- Middleware Setup ---
 app.use(helmet());
@@ -40,7 +43,7 @@ const smtpTransporters: Record<string, Transporter> = {};
 const SESSION_TTL = 3600 * 1000; // 1 hour
 
 // Middleware to attach user connections to the request if authenticated
-const authenticate = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+const authenticate = (req: Request, res: Response, next: NextFunction) => {
     const token = req.headers.authorization?.split(' ')[1];
     if (token && sessionStore[token]) {
         const session = sessionStore[token];
@@ -68,7 +71,7 @@ const authenticate = (req: express.Request, res: express.Response, next: express
 // --- API Routes ---
 
 // Auth
-app.post('/api/login', async (req: express.Request, res: express.Response) => {
+app.post('/api/login', async (req: Request, res: Response) => {
     const { email, password } = req.body;
     try {
         if (!email || !password) {
@@ -114,7 +117,7 @@ app.post('/api/login', async (req: express.Request, res: express.Response) => {
     }
 });
 
-app.post('/api/logout', (req: express.Request, res: express.Response) => {
+app.post('/api/logout', (req: Request, res: Response) => {
     const token = req.headers.authorization?.split(' ')[1];
     if (token) {
         const imap = imapConnections[token];
@@ -132,7 +135,7 @@ app.post('/api/logout', (req: express.Request, res: express.Response) => {
 });
 
 
-app.get('/api/session', (req: express.Request, res: express.Response) => {
+app.get('/api/session', (req: Request, res: Response) => {
     const token = req.headers.authorization?.split(' ')[1];
     if (token && sessionStore[token]) {
         const session = sessionStore[token];
@@ -149,7 +152,7 @@ app.use('/api', authenticate);
 
 
 // Initial Data
-app.get('/api/initial-data', async (req: express.Request, res: express.Response) => {
+app.get('/api/initial-data', async (req: Request, res: Response) => {
     try {
         const { imap, userId } = req.credentials!;
         
@@ -169,21 +172,21 @@ app.get('/api/initial-data', async (req: express.Request, res: express.Response)
 });
 
 // Mail Actions
-app.post('/api/conversations/move', async (req: express.Request, res: express.Response) => {
+app.post('/api/conversations/move', async (req: Request, res: Response) => {
     const { conversationIds, targetFolderId } = req.body;
     const { imap } = req.credentials!;
     const emails = await mailService.moveConversations(imap, conversationIds, targetFolderId);
     res.json({ emails });
 });
 
-app.post('/api/conversations/delete-permanently', async (req: express.Request, res: express.Response) => {
+app.post('/api/conversations/delete-permanently', async (req: Request, res: Response) => {
     const { conversationIds } = req.body;
     const { imap } = req.credentials!;
     const emails = await mailService.deleteConversationsPermanently(imap, conversationIds);
     res.json({ emails });
 });
 
-app.post('/api/conversations/toggle-label', async (req: express.Request, res: express.Response) => {
+app.post('/api/conversations/toggle-label', async (req: Request, res: Response) => {
     const { conversationIds, labelId } = req.body;
     const { imap, userId } = req.credentials!;
     const label = await dbService.getLabelById(labelId, userId);
@@ -192,28 +195,28 @@ app.post('/api/conversations/toggle-label', async (req: express.Request, res: ex
     res.json({ emails });
 });
 
-app.post('/api/conversations/mark-read', async (req: express.Request, res: express.Response) => {
+app.post('/api/conversations/mark-read', async (req: Request, res: Response) => {
     const { conversationIds, isRead } = req.body;
     const { imap } = req.credentials!;
     const emails = await mailService.markConversationsAsRead(imap, conversationIds, isRead);
     res.json({ emails });
 });
 
-app.post('/api/emails/send', async (req: express.Request, res: express.Response) => {
+app.post('/api/emails/send', async (req: Request, res: Response) => {
     const { data, user, conversationId, draftId } = req.body;
     const { smtp, imap } = req.credentials!;
     const emails = await mailService.sendEmail({ data, user, smtp, imap, conversationId, draftId });
     res.json({ emails });
 });
 
-app.post('/api/emails/draft', async (req: express.Request, res: express.Response) => {
+app.post('/api/emails/draft', async (req: Request, res: Response) => {
     const { data, user, conversationId, draftId } = req.body;
     const { imap } = req.credentials!;
     const { emails, newDraftId } = await mailService.saveDraft({ data, user, imap, conversationId, draftId });
     res.json({ emails, newDraftId });
 });
 
-app.delete('/api/emails/draft', async (req: express.Request, res: express.Response) => {
+app.delete('/api/emails/draft', async (req: Request, res: Response) => {
     const { draftId } = req.body;
     const { imap } = req.credentials!;
     const emails = await mailService.deleteDraft(imap, draftId);
@@ -221,14 +224,14 @@ app.delete('/api/emails/draft', async (req: express.Request, res: express.Respon
 });
 
 // Labels
-app.post('/api/labels', async (req: express.Request, res: express.Response) => {
+app.post('/api/labels', async (req: Request, res: Response) => {
     const { name, color } = req.body;
     const { userId } = req.credentials!;
     const labels = await dbService.createLabel(name, color, userId);
     res.json({ labels });
 });
 
-app.patch('/api/labels/:id', async (req: express.Request, res: express.Response) => {
+app.patch('/api/labels/:id', async (req: Request, res: Response) => {
     const { id } = req.params;
     const updates = req.body;
     const { userId } = req.credentials!;
@@ -236,7 +239,7 @@ app.patch('/api/labels/:id', async (req: express.Request, res: express.Response)
     res.json({ labels });
 });
 
-app.delete('/api/labels/:id', async (req: express.Request, res: express.Response) => {
+app.delete('/api/labels/:id', async (req: Request, res: Response) => {
     const { id: labelId } = req.params;
     const { imap, userId } = req.credentials!;
 
@@ -251,14 +254,14 @@ app.delete('/api/labels/:id', async (req: express.Request, res: express.Response
 });
 
 // Folders
-app.post('/api/folders', async (req: express.Request, res: express.Response) => {
+app.post('/api/folders', async (req: Request, res: Response) => {
     const { name } = req.body;
     const { userId } = req.credentials!;
     const folders = await dbService.createFolder(name, userId);
     res.json({ folders });
 });
 
-app.patch('/api/folders/:id', async (req: express.Request, res: express.Response) => {
+app.patch('/api/folders/:id', async (req: Request, res: Response) => {
     const { id } = req.params;
     const { newName } = req.body;
     const { userId } = req.credentials!;
@@ -266,7 +269,7 @@ app.patch('/api/folders/:id', async (req: express.Request, res: express.Response
     res.json({ folders });
 });
 
-app.delete('/api/folders/:id', async (req: express.Request, res: express.Response) => {
+app.delete('/api/folders/:id', async (req: Request, res: Response) => {
     const { id } = req.params;
     const { imap, userId } = req.credentials!;
     const folderToDelete = await dbService.getFolderById(id, userId);
@@ -280,21 +283,21 @@ app.delete('/api/folders/:id', async (req: express.Request, res: express.Respons
 });
 
 // Settings
-app.post('/api/settings', async (req: express.Request, res: express.Response) => {
+app.post('/api/settings', async (req: Request, res: Response) => {
     const { userId } = req.credentials!;
     const settings = await dbService.updateSettings(req.body, userId);
     res.json({ settings });
 });
 
 // Contacts & Groups
-app.post('/api/contacts', async (req: express.Request, res: express.Response) => {
+app.post('/api/contacts', async (req: Request, res: Response) => {
     const contactData = req.body;
     const { userId } = req.credentials!;
     const { contacts, newContactId } = await dbService.addContact(contactData, userId);
     res.json({ contacts, newContactId });
 });
 
-app.put('/api/contacts/:id', async (req: express.Request, res: express.Response) => {
+app.put('/api/contacts/:id', async (req: Request, res: Response) => {
     const { id } = req.params;
     const updatedContact = req.body;
     const { userId } = req.credentials!;
@@ -302,28 +305,28 @@ app.put('/api/contacts/:id', async (req: express.Request, res: express.Response)
     res.json({ contacts });
 });
 
-app.delete('/api/contacts/:id', async (req: express.Request, res: express.Response) => {
+app.delete('/api/contacts/:id', async (req: Request, res: Response) => {
     const { id } = req.params;
     const { userId } = req.credentials!;
     const { contacts, groups } = await dbService.deleteContact(id, userId);
     res.json({ contacts, groups });
 });
 
-app.post('/api/contacts/import', async (req: express.Request, res: express.Response) => {
+app.post('/api/contacts/import', async (req: Request, res: Response) => {
     const { newContacts } = req.body;
     const { userId } = req.credentials!;
     const result = await dbService.importContacts(newContacts, userId);
     res.json(result);
 });
 
-app.post('/api/contact-groups', async (req: express.Request, res: express.Response) => {
+app.post('/api/contact-groups', async (req: Request, res: Response) => {
     const { name } = req.body;
     const { userId } = req.credentials!;
     const groups = await dbService.createContactGroup(name, userId);
     res.json({ groups });
 });
 
-app.patch('/api/contact-groups/:id', async (req: express.Request, res: express.Response) => {
+app.patch('/api/contact-groups/:id', async (req: Request, res: Response) => {
     const { id } = req.params;
     const { newName } = req.body;
     const { userId } = req.credentials!;
@@ -331,14 +334,14 @@ app.patch('/api/contact-groups/:id', async (req: express.Request, res: express.R
     res.json({ groups });
 });
 
-app.delete('/api/contact-groups/:id', async (req: express.Request, res: express.Response) => {
+app.delete('/api/contact-groups/:id', async (req: Request, res: Response) => {
     const { id } = req.params;
     const { userId } = req.credentials!;
     const groups = await dbService.deleteContactGroup(id, userId);
     res.json({ groups });
 });
 
-app.post('/api/contact-groups/:id/members', async (req: express.Request, res: express.Response) => {
+app.post('/api/contact-groups/:id/members', async (req: Request, res: Response) => {
     const { id } = req.params;
     const { contactId } = req.body;
     const { userId } = req.credentials!;
@@ -346,7 +349,7 @@ app.post('/api/contact-groups/:id/members', async (req: express.Request, res: ex
     res.json({ groups });
 });
 
-app.delete('/api/contact-groups/:id/members/:contactId', async (req: express.Request, res: express.Response) => {
+app.delete('/api/contact-groups/:id/members/:contactId', async (req: Request, res: Response) => {
     const { id, contactId } = req.params;
     const { userId } = req.credentials!;
     const groups = await dbService.removeContactFromGroup(id, contactId, userId);
@@ -365,16 +368,54 @@ app.use(express.static(buildPath));
 
 // The "catchall" handler: for any request that doesn't match one above,
 // send back React's index.html file. This is crucial for client-side routing.
-app.get('*', (req: express.Request, res: express.Response) => {
+app.get('*', (req: Request, res: Response) => {
     res.sendFile(path.join(buildPath, 'index.html'));
 });
 
 // --- Server Startup ---
 const startServer = async () => {
     await dbService.initDb();
-    app.listen(PORT, () => {
-        console.log(`🚀 Backend server is running at http://localhost:${PORT}`);
-    });
+    
+    const SOCKET_PATH = process.env.SOCKET_PATH;
+    const PORT = process.env.PORT || 3001;
+
+    if (SOCKET_PATH) {
+        // Production: Listen on UNIX socket
+        const socketPath = path.resolve(SOCKET_PATH);
+
+        // Clean up old socket file if it exists
+        if (fs.existsSync(socketPath)) {
+            console.log('Removing old socket file...');
+            fs.unlinkSync(socketPath);
+        }
+
+        const server = app.listen(socketPath, () => {
+            // Set permissions so the web server (e.g., Apache, Nginx) can access the socket
+            // 660 permissions: read/write for owner and group
+            fs.chmodSync(socketPath, '660');
+            console.log(`🚀 Backend server is listening on UNIX socket: ${socketPath}`);
+        });
+
+        // Graceful shutdown to clean up the socket file
+        const shutdown = () => {
+            console.log('Shutting down server...');
+            server.close(() => {
+                console.log('Server closed. Removing socket file.');
+                if (fs.existsSync(socketPath)) {
+                    fs.unlinkSync(socketPath);
+                }
+                process.exit(0);
+            });
+        };
+
+        process.on('SIGTERM', shutdown); // For pm2, etc.
+        process.on('SIGINT', shutdown);  // For Ctrl+C
+    } else {
+        // Development: Listen on a network port
+        app.listen(PORT, () => {
+            console.log(`🚀 Backend server is running for development at http://localhost:${PORT}`);
+        });
+    }
 };
 
 startServer();

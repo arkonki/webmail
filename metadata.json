@@ -2,6 +2,22 @@
   "name": "Modern Webmail Client - Production",
   "description": "A modern webmail client UI that imitates the usability and functionality of services like Gmail. This will be a full stack system",
   "requestFramePermissions": [],
-  "env": [],
+  "env": [
+    {
+      "name": "DATABASE_URL",
+      "description": "Connection string for the PostgreSQL database.",
+      "example": "postgresql://user:password@localhost:5432/webmail"
+    },
+    {
+      "name": "SOCKET_PATH",
+      "description": "Optional. Path to a UNIX socket file for production. If set, the server listens on the socket instead of a network port.",
+      "example": "/var/run/webmail.socket"
+    },
+    {
+      "name": "PORT",
+      "description": "Optional. The network port to listen on if SOCKET_PATH is not set. Defaults to 3001.",
+      "example": "3001"
+    }
+  ],
   "prompt": ""
 }

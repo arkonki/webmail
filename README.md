@@ -14,7 +14,7 @@ This project is a complete, full-stack modern webmail client built with React, T
 - **Contacts Management**: A full contacts book with support for creating contacts and groups.
 - **Persistent Settings**: Configure signatures, auto-responders, send-delay, and filtering rules.
 - **Live Backend API**: A Node.js/Express backend that serves a REST API.
-- **Persistent Database**: Uses SQLite for persistent storage of contacts, settings, labels, and folders.
+- **Persistent Database**: Uses **PostgreSQL** for robust, persistent storage of contacts, settings, labels, and folders.
 - **Real Mail Server Integration**: Connects to any standard IMAP/SMTP server for mail operations.
 - **Dark Mode**: A sleek dark theme that respects system preferences.
 
@@ -22,7 +22,7 @@ This project is a complete, full-stack modern webmail client built with React, T
 
 - **Frontend**: React, TypeScript, Tailwind CSS, Vite
 - **Backend**: Node.js, Express.js, `sanitize-html`, `helmet`
-- **Database**: SQLite (for persistent local storage)
+- **Database**: PostgreSQL (via `pg` client)
 - **Mail Protocols**: `node-imap` for IMAP, `nodemailer` for SMTP
 
 ---
@@ -33,7 +33,8 @@ Follow these instructions to get the project running on your local machine for d
 
 ### Prerequisites
 
-You need to have [Node.js](https://nodejs.org/) (version 18 or later) and `npm` installed on your machine.
+- You need to have [Node.js](https://nodejs.org/) (version 18 or later) and `npm` installed.
+- You must have **PostgreSQL** installed and running on your local machine.
 
 ### Installation & Setup
 
@@ -47,12 +48,26 @@ You need to have [Node.js](https://nodejs.org/) (version 18 or later) and `npm` 
     ```bash
     npm install
     ```
-    
-3.  **Configure the Mail Server:**
-    This is the most important setup step.
+
+3.  **Set up the PostgreSQL Database:**
+    - Connect to your PostgreSQL instance (e.g., using `psql`).
+    - Create a new database for the application.
+      ```sql
+      CREATE DATABASE webmail;
+      ```
+
+4.  **Configure Environment Variables:**
+    - Create a file named `.env` in the root of the project directory.
+    - Add the connection string for your new database to this file. Replace the username, password, and database name as needed.
+      ```
+      # .env
+      DATABASE_URL="postgresql://YOUR_USER:YOUR_PASSWORD@localhost:5432/webmail"
+      ```
+
+5.  **Configure the Mail Server:**
     - Open the file `server/mailService.ts`.
     - Find the `TODO` comments inside the `getImapConfig` and `getSmtpConfig` functions.
-    - Replace the placeholder `host` and `port` details with the actual server details for your mail provider (e.g., `mail.veebimajutus.ee`).
+    - Replace the placeholder `host` and `port` details with the actual server details for your mail provider.
 
 ### Running the Application
 
@@ -60,13 +75,13 @@ There are two primary ways to run this application:
 
 #### 1. Development Mode (Hot-Reloading Enabled)
 
-For development, you run the frontend and backend in two separate terminals. This allows the frontend to instantly update in your browser as you make code changes.
+For development, you run the frontend and backend in two separate terminals.
 
 -   **Terminal 1: Start the Backend API Server**
     ```bash
     npm run serve
     ```
-    This starts the Node.js/Express server on `http://localhost:3001`.
+    This starts the Node.js/Express server on `http://localhost:3001`, which will connect to your PostgreSQL database.
 
 -   **Terminal 2: Start the Frontend Dev Server**
     ```bash
@@ -78,7 +93,7 @@ For development, you run the frontend and backend in two separate terminals. Thi
 
 #### 2. Production Mode (Locally)
 
-This method mimics how your application would run on a production server. It's the best way to test the final, built version of the app.
+This method mimics how your application would run on a production server.
 
 -   **Build and Start the Application**
     ```bash
@@ -101,26 +116,105 @@ This project is configured to be deployed as a single, self-contained applicatio
     npm install
     ```
     
-2.  **Build and Start the Server**: Use the `start` script.
+2.  **Configure Environment**: Ensure the `DATABASE_URL` environment variable is set on your server, pointing to your production PostgreSQL database.
+
+3.  **Build and Start the Server**: Use the `start` script. For production, it's highly recommended to use a process manager like `pm2` and a UNIX socket (see below).
     ```bash
     npm start
     ```
 
-3.  **Access Your Application**: Your webmail client will now be running on the port specified in `server/index.ts` (default is `3001`). You can access it at `http://your_server_ip:3001`.
+4.  **Access Your Application**: Your webmail client will now be running. It is recommended to put it behind a reverse proxy like Apache or Nginx.
 
 ### Production Considerations
 
-- **Database**: This project uses **SQLite**, which is a file-based database (`data/app.db`). This is fine for many private server setups. However, if your host has an **ephemeral filesystem** (common in serverless or containerized environments), the database file will be **DELETED** on restart. For those environments, you **MUST** replace SQLite with a managed database service like PostgreSQL or MySQL. The backend logic in `server/databaseService.ts` is structured to make this switch straightforward.
+- **Process Management & Reverse Proxy (Recommended)**: For a robust, secure, and performant production deployment, you should run the application with a process manager like `pm2` and use a reverse proxy (Apache, Nginx) to handle incoming traffic and SSL. The server is configured to listen on a more secure **UNIX socket** when the `SOCKET_PATH` environment variable is provided.
+    
+    1.  **Start the App with `pm2` using a Socket**:
+        ```bash
+        # Install pm2 globally if you haven't already
+        npm install pm2 -g
+        
+        # Start the app, pointing to a socket file.
+        # Ensure the directory exists and your user has permissions to write to it.
+        # The DATABASE_URL must also be available in the environment.
+        SOCKET_PATH="/var/run/webmail.socket" pm2 start "npm run start" --name webmail-client
+        ```
+    
+    2.  **Configure File Permissions**: The application's user needs to share a group with the web server so it can access the socket. For Debian/Ubuntu systems with Apache/Nginx, this is typically the `www-data` group.
+        ```bash
+        # Add your application user to the www-data group
+        sudo usermod -aG www-data your_user_name
+        
+        # You may need to log out and log back in for the group change to take effect.
+        ```
+        The Node.js application will automatically set the correct `660` permissions on the socket file, allowing the user and group members to read/write.
+    
+    3.  **Configure Your Reverse Proxy**:
+        
+        **Apache2 Example (`<VirtualHost>` block):**
+        This configuration serves the frontend and forwards all API traffic to the Node.js app via the socket. It requires `mod_proxy` and `mod_proxy_http`.
+        ```apache
+        <VirtualHost *:443>
+            ServerName yourdomain.com
+            DocumentRoot "/path/to/your/webmail/dist"
 
-- **Process Management**: For a robust production deployment, you should use a process manager like `pm2` to run the application. This will ensure it restarts automatically if it crashes.
+            # SSL Configuration (recommended with Let's Encrypt)...
+            SSLEngine on
+            SSLCertificateFile /etc/letsencrypt/live/yourdomain.com/fullchain.pem
+            SSLCertificateKeyFile /etc/letsencrypt/live/yourdomain.com/privkey.pem
+            
+            # Use ProxyPass to forward API requests to the UNIX socket
+            ProxyPass "/api/" "unix:/var/run/webmail.socket|http://localhost/api/"
+            
+            # Serve frontend files, with a fallback to index.html for client-side routing
+            <Directory "/path/to/your/webmail/dist">
+                AllowOverride All
+                Require all granted
+                FallbackResource /index.html
+            </Directory>
+        </VirtualHost>
+        ```
+        
+        **Nginx Example (`server` block):**
+        ```nginx
+        server {
+            listen 443 ssl;
+            server_name yourdomain.com;
+            
+            # SSL Configuration...
+            ssl_certificate /etc/letsencrypt/live/yourdomain.com/fullchain.pem;
+            ssl_certificate_key /etc/letsencrypt/live/yourdomain.com/privkey.pem;
+
+            root /path/to/your/webmail/dist;
+            index index.html;
+
+            location / {
+                try_files $uri /index.html;
+            }
+            
+            location /api/ {
+                proxy_pass http://unix:/var/run/webmail.socket;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+            }
+        }
+        ```
+
+- **Zero-Downtime Updates**: With `pm2`, you can update the application without any interruption. After you've deployed the new code files to your server, simply run:
     ```bash
-    # Install pm2 globally
-    npm install pm2 -g
-    # Start the app with pm2
-    pm2 start "npm run start" --name webmail-client
+    # After updating files, reload the app for zero downtime
+    pm2 reload webmail-client
     ```
 
-- **HTTPS**: You **must** run this application over HTTPS in production to protect data in transit. Use a reverse proxy like Nginx or Caddy to handle SSL termination (getting a free certificate from Let's Encrypt) and forward requests to your Node.js application.
+- **Automated Deployments (CI/CD)**: For a professional workflow that avoids manual updates, it is highly recommended to set up a CI/CD (Continuous Integration/Continuous Deployment) pipeline using services like **GitHub Actions**. This automates the entire process:
+  1.  **Push Code**: You push your changes to your Git repository.
+  2.  **Build & Test**: The pipeline automatically installs dependencies, runs tests, and builds the production version of your app.
+  3.  **Deploy**: The new files are securely copied to your server, and the `pm2 reload` command is executed to update the live application with zero downtime.
+  This approach significantly improves reliability and efficiency.
+
+- **HTTPS**: You **must** run this application over HTTPS in production to protect data in transit. The reverse proxy examples above show where to add SSL configuration, which can be obtained for free from Let's Encrypt.
 
 ---
 
