@@ -261,7 +261,88 @@ app.patch('/api/settings/profile', async (req: Request, res: Response) => {
     }
 });
 
-// Contacts & Groups (omitted for brevity, but would follow the same pattern)
+// Contacts & Groups
+app.post('/api/contacts', async (req: Request, res: Response) => {
+    const contactData = req.body;
+    if (!contactData || typeof contactData.name !== 'string' || contactData.name.trim().length === 0 || typeof contactData.email !== 'string' || contactData.email.trim().length === 0) {
+        return res.status(400).json({ message: 'Invalid contact data. Name and email are required.' });
+    }
+    const { userId } = req.sessionData!;
+    const { contacts, newContactId } = await dbService.addContact(contactData, userId);
+    res.json({ contacts, newContactId });
+});
+
+app.put('/api/contacts/:id', async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const updatedContact = req.body;
+    if (!updatedContact || typeof updatedContact.name !== 'string' || updatedContact.name.trim().length === 0 || typeof updatedContact.email !== 'string' || updatedContact.email.trim().length === 0) {
+        return res.status(400).json({ message: 'Invalid contact data. Name and email are required.' });
+    }
+    const { userId } = req.sessionData!;
+    const contacts = await dbService.updateContact(id, updatedContact, userId);
+    res.json({ contacts });
+});
+
+app.delete('/api/contacts/:id', async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { userId } = req.sessionData!;
+    const { contacts, groups } = await dbService.deleteContact(id, userId);
+    res.json({ contacts, groups });
+});
+
+app.post('/api/contacts/import', async (req: Request, res: Response) => {
+    const { newContacts } = req.body;
+    if (!Array.isArray(newContacts)) {
+        return res.status(400).json({ message: 'Invalid input. Expected an array of contacts.' });
+    }
+    const { userId } = req.sessionData!;
+    const result = await dbService.importContacts(newContacts, userId);
+    res.json(result);
+});
+
+app.post('/api/contact-groups', async (req: Request, res: Response) => {
+    const { name } = req.body;
+    if (typeof name !== 'string' || name.trim().length === 0 || name.length > 50) {
+        return res.status(400).json({ message: 'Group name must be a non-empty string up to 50 characters.' });
+    }
+    const { userId } = req.sessionData!;
+    const groups = await dbService.createContactGroup(name.trim(), userId);
+    res.json({ groups });
+});
+
+app.patch('/api/contact-groups/:id', async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { newName } = req.body;
+    if (typeof newName !== 'string' || newName.trim().length === 0 || newName.length > 50) {
+        return res.status(400).json({ message: 'Group name must be a non-empty string up to 50 characters.' });
+    }
+    const { userId } = req.sessionData!;
+    const groups = await dbService.renameContactGroup(id, newName.trim(), userId);
+    res.json({ groups });
+});
+
+app.delete('/api/contact-groups/:id', async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { userId } = req.sessionData!;
+    const groups = await dbService.deleteContactGroup(id, userId);
+    res.json({ groups });
+});
+
+app.post('/api/contact-groups/:id/members', async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { contactId } = req.body;
+    if (typeof contactId !== 'string') return res.status(400).json({ message: 'Invalid contactId.' });
+    const { userId } = req.sessionData!;
+    const groups = await dbService.addContactToGroup(id, contactId, userId);
+    res.json({ groups });
+});
+
+app.delete('/api/contact-groups/:id/members/:contactId', async (req: Request, res: Response) => {
+    const { id, contactId } = req.params;
+    const { userId } = req.sessionData!;
+    const groups = await dbService.removeContactFromGroup(id, contactId, userId);
+    res.json({ groups });
+});
 
 // --- FRONTEND SERVING ---
 const __dirname = path.dirname(new URL(import.meta.url).pathname);
