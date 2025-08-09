@@ -126,44 +126,62 @@ export const getEmailsForUser = async (credentials: Credentials): Promise<Email[
     let imap: Imap | undefined;
     try {
         imap = await connectImap(getImapConfig(credentials.user, credentials.pass));
-        await openImapBox(imap, 'INBOX');
+        const box = await openImapBox(imap, 'INBOX');
         
+        if (box.messages.total === 0) {
+            console.log("Inbox is empty.");
+            imap.end();
+            return [];
+        }
+
         return new Promise<Email[]>((resolve, reject) => {
             const fetchedEmails: Email[] = [];
-            const fetch = imap.seq.fetch('1:*', { bodies: '', struct: true, envelope: true });
             
-            fetch.on('message', (msg, seqno) => {
-                let buffer = '';
-                let flags: string[] = [];
-                msg.on('attributes', (attrs) => {
-                    flags = attrs.flags;
-                });
-                msg.on('body', (stream) => {
-                    stream.on('data', (chunk) => { buffer += chunk.toString('utf8'); });
-                });
-                msg.once('end', async () => {
-                    try {
-                        const parsed = await simpleParser(buffer);
-                        const email = mapParsedMailToEmail(parsed, seqno, 'Inbox', flags);
-                        fetchedEmails.push(email);
-                    } catch (parseError) {
-                        console.error('Error parsing email:', parseError);
-                    }
-                });
-            });
+            imap.search(['ALL'], (err, uids) => {
+                if (err) {
+                    return reject(err);
+                }
+                if (uids.length === 0) {
+                    return resolve([]);
+                }
 
-            fetch.once('error', (err) => {
-                console.error('Fetch error:', err);
-                reject(err);
-            });
+                const fetch = imap.fetch(uids, { bodies: '', struct: true });
+                
+                fetch.on('message', (msg, seqno) => {
+                    let buffer = '';
+                    let flags: string[] = [];
+                    msg.on('attributes', (attrs) => {
+                        flags = attrs.flags;
+                    });
+                    msg.on('body', (stream) => {
+                        stream.on('data', (chunk) => { buffer += chunk.toString('utf8'); });
+                    });
+                    msg.once('end', async () => {
+                        try {
+                            const parsed = await simpleParser(buffer);
+                            const email = mapParsedMailToEmail(parsed, seqno, 'Inbox', flags);
+                            fetchedEmails.push(email);
+                        } catch (parseError) {
+                            console.error('Error parsing email:', parseError);
+                        }
+                    });
+                });
 
-            fetch.once('end', () => {
-                console.log('Done fetching all messages!');
-                resolve(fetchedEmails);
+                fetch.once('error', (err) => {
+                    console.error('Fetch error:', err);
+                    reject(err);
+                });
+
+                fetch.once('end', () => {
+                    console.log(`Done fetching ${fetchedEmails.length} messages!`);
+                    resolve(fetchedEmails);
+                });
             });
         });
     } finally {
-        imap?.end();
+        if (imap && imap.state !== 'disconnected') {
+            imap.end();
+        }
     }
 };
 

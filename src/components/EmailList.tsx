@@ -173,21 +173,21 @@ const EmailList: React.FC = () => {
     <div className="flex-grow flex flex-col bg-white dark:bg-dark-surface overflow-y-auto">
         { showBulkActions ? <BulkActionBar /> : (
             <div className="p-4 border-b border-outline dark:border-dark-outline flex items-center justify-between gap-4">
-                 <div className="flex items-center gap-4 flex-shrink-0">
+                 <div className="flex items-center gap-4 flex-grow min-w-0">
                     <input
                         type="checkbox"
-                        className="form-checkbox h-5 w-5 text-primary rounded border-gray-300 dark:border-gray-600 bg-transparent dark:bg-gray-800 focus:ring-primary"
+                        className="form-checkbox h-5 w-5 text-primary rounded border-gray-300 dark:border-gray-600 bg-transparent dark:bg-gray-800 focus:ring-primary flex-shrink-0"
                         checked={areAllSelected}
                         onChange={handleSelectAll}
                         disabled={displayedConversations.length === 0}
                         title="Select all"
                     />
-                    <h2 className="text-lg font-medium text-on-surface dark:text-dark-on-surface truncate">{listTitle}</h2>
-                </div>
-                <div className="flex items-center gap-4">
-                    <div className="flex-grow max-w-lg hidden md:block">
+                    <div className="flex-grow max-w-xl min-w-0">
                         <SearchBar />
                     </div>
+                </div>
+                <div className="flex items-center gap-4 flex-shrink-0">
+                    <h2 className="text-lg font-medium text-on-surface dark:text-dark-on-surface truncate hidden lg:block">{listTitle}</h2>
                     <PaginationControls />
                 </div>
             </div>

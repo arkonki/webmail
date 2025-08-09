@@ -1,4 +1,5 @@
 
+
 import { Pool } from 'pg';
 import { AppSettings, Label, UserFolder, Contact, ContactGroup, User } from '../src/types';
 import crypto from 'crypto';
@@ -291,7 +292,7 @@ export const completeOnboarding = async (userId: string, data: Partial<AppSettin
             isOnboardingCompleted: true,
         };
         
-        await client.query('UPDATE settings SET value = $1 WHERE "userId" = $2', [JSON.stringify(updatedSettings), userId]);
+        await client.query('UPDATE settings SET value = $1 WHERE "userId" = $2', [updatedSettings, userId]);
 
         const userEmailRes = await client.query('SELECT email FROM users WHERE id = $1', [userId]);
         const userEmail = userEmailRes.rows[0].email;

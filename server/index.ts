@@ -1,6 +1,6 @@
 /// <reference types="node" />
 
-import express from 'express';
+import express, { Request, Response, NextFunction, Application } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import path from 'path';
@@ -8,6 +8,8 @@ import fs from 'fs';
 import http from 'http';
 import { WebSocketServer } from 'ws';
 import url from 'url';
+import rateLimit from 'express-rate-limit';
+import process from 'process';
 
 import * as mailService from './mailService';
 import * as dbService from './databaseService';
@@ -29,7 +31,7 @@ declare global {
   }
 }
 
-const app: express.Application = express();
+const app: Application = express();
 
 
 // --- Middleware Setup ---
@@ -48,7 +50,7 @@ setInterval(() => {
 
 
 // Middleware to authenticate requests in a stateless manner
-const authenticate = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+const authenticate = async (req: Request, res: Response, next: NextFunction) => {
     const token = req.headers.authorization?.split(' ')[1];
     if (token) {
         const session = await dbService.getSession(token);
@@ -82,12 +84,21 @@ const authenticate = async (req: express.Request, res: express.Response, next: e
 
 // --- API Routes ---
 
+// Security: Rate limiting for login
+const loginLimiter = rateLimit({
+	windowMs: 15 * 60 * 1000, // 15 minutes
+	max: 10, // Limit each IP to 10 requests per window
+	standardHeaders: true,
+	legacyHeaders: false,
+    message: { message: 'Too many login attempts. Please try again after 15 minutes.'}
+});
+
 // Auth (unauthenticated)
-app.post('/api/login', async (req: express.Request, res: express.Response) => {
+app.post('/api/login', loginLimiter, async (req: Request, res: Response) => {
     const { email, password } = req.body;
     try {
-        if (!email || !password) {
-            return res.status(400).json({ message: 'Email and password are required' });
+        if (typeof email !== 'string' || typeof password !== 'string' || !email || !password) {
+            return res.status(400).json({ message: 'Email and password are required and must be strings.' });
         }
         
         const user = await mailService.login(email, password);
@@ -118,7 +129,7 @@ app.post('/api/login', async (req: express.Request, res: express.Response) => {
 app.use('/api', authenticate);
 
 // Authenticated Auth routes
-app.post('/api/logout', async (req: express.Request, res: express.Response) => {
+app.post('/api/logout', async (req: Request, res: Response) => {
     const token = req.headers.authorization?.split(' ')[1];
     if (token) {
         const session = await dbService.getSession(token);
@@ -130,13 +141,13 @@ app.post('/api/logout', async (req: express.Request, res: express.Response) => {
     res.status(200).json({ message: "Logged out successfully."});
 });
 
-app.get('/api/session', (req: express.Request, res: express.Response) => {
+app.get('/api/session', (req: Request, res: Response) => {
     res.json({ user: req.sessionData!.user });
 });
 
 
 // Initial Data
-app.get('/api/initial-data', async (req: express.Request, res: express.Response) => {
+app.get('/api/initial-data', async (req: Request, res: Response) => {
     try {
         const { credentials, userId } = req.sessionData!;
         
@@ -160,22 +171,29 @@ app.get('/api/initial-data', async (req: express.Request, res: express.Response)
 });
 
 // Mail Actions
-app.post('/api/conversations/move', async (req: express.Request, res: express.Response) => {
+app.post('/api/conversations/move', async (req: Request, res: Response) => {
     const { conversationIds, targetFolderId } = req.body;
+    if (!Array.isArray(conversationIds) || typeof targetFolderId !== 'string') {
+        return res.status(400).json({ message: 'Invalid input.' });
+    }
     const { credentials } = req.sessionData!;
     const emails = await mailService.moveConversations(credentials, conversationIds, targetFolderId);
     res.json({ emails });
 });
 
-app.post('/api/conversations/delete-permanently', async (req: express.Request, res: express.Response) => {
+app.post('/api/conversations/delete-permanently', async (req: Request, res: Response) => {
     const { conversationIds } = req.body;
+    if (!Array.isArray(conversationIds)) return res.status(400).json({ message: 'Invalid input.' });
     const { credentials } = req.sessionData!;
     const emails = await mailService.deleteConversationsPermanently(credentials, conversationIds);
     res.json({ emails });
 });
 
-app.post('/api/conversations/toggle-label', async (req: express.Request, res: express.Response) => {
+app.post('/api/conversations/toggle-label', async (req: Request, res: Response) => {
     const { conversationIds, labelId } = req.body;
+    if (!Array.isArray(conversationIds) || typeof labelId !== 'string') {
+        return res.status(400).json({ message: 'Invalid input.' });
+    }
     const { credentials, userId } = req.sessionData!;
     const label = await dbService.getLabelById(labelId, userId);
     if (!label) return res.status(404).json({message: "Label not found"});
@@ -183,51 +201,71 @@ app.post('/api/conversations/toggle-label', async (req: express.Request, res: ex
     res.json({ emails });
 });
 
-app.post('/api/conversations/mark-read', async (req: express.Request, res: express.Response) => {
+app.post('/api/conversations/mark-read', async (req: Request, res: Response) => {
     const { conversationIds, isRead } = req.body;
+    if (!Array.isArray(conversationIds) || typeof isRead !== 'boolean') {
+        return res.status(400).json({ message: 'Invalid input.' });
+    }
     const { credentials } = req.sessionData!;
     const emails = await mailService.markConversationsAsRead(credentials, conversationIds, isRead);
     res.json({ emails });
 });
 
-app.post('/api/emails/send', async (req: express.Request, res: express.Response) => {
+app.post('/api/emails/send', async (req: Request, res: Response) => {
     const { data, user, conversationId, draftId } = req.body;
+    if (!data || typeof data.to !== 'string' || typeof data.subject !== 'string' || typeof data.body !== 'string' || !user) {
+        return res.status(400).json({ message: 'Invalid email data.' });
+    }
     const { credentials } = req.sessionData!;
     const emails = await mailService.sendEmail({ data, user, credentials, conversationId, draftId });
     res.json({ emails });
 });
 
-app.post('/api/emails/draft', async (req: express.Request, res: express.Response) => {
+app.post('/api/emails/draft', async (req: Request, res: Response) => {
     const { data, user, conversationId, draftId } = req.body;
+    if (!data || typeof data.body !== 'string' || !user) { // Drafts can have empty to/subject
+        return res.status(400).json({ message: 'Invalid draft data.' });
+    }
     const { credentials } = req.sessionData!;
     const { emails, newDraftId } = await mailService.saveDraft({ data, user, credentials, conversationId, draftId });
     res.json({ emails, newDraftId });
 });
 
-app.delete('/api/emails/draft', async (req: express.Request, res: express.Response) => {
+app.delete('/api/emails/draft', async (req: Request, res: Response) => {
     const { draftId } = req.body;
+    if (typeof draftId !== 'string') return res.status(400).json({ message: 'Invalid input.' });
     const { credentials } = req.sessionData!;
     const emails = await mailService.deleteDraft(credentials, draftId);
     res.json({ emails });
 });
 
 // Labels
-app.post('/api/labels', async (req: express.Request, res: express.Response) => {
+app.post('/api/labels', async (req: Request, res: Response) => {
     const { name, color } = req.body;
+    if (typeof name !== 'string' || name.trim().length === 0 || name.length > 50) {
+        return res.status(400).json({ message: 'Label name must be a non-empty string up to 50 characters.' });
+    }
+    if (typeof color !== 'string' || !/^#[0-9a-f]{6}$/i.test(color)) {
+        return res.status(400).json({ message: 'Color must be a valid hex code (e.g., #RRGGBB).' });
+    }
     const { userId } = req.sessionData!;
-    const labels = await dbService.createLabel(name, color, userId);
+    const labels = await dbService.createLabel(name.trim(), color, userId);
     res.json({ labels });
 });
 
-app.patch('/api/labels/:id', async (req: express.Request, res: express.Response) => {
+app.patch('/api/labels/:id', async (req: Request, res: Response) => {
     const { id } = req.params;
-    const updates = req.body;
+    const { name, color } = req.body;
+    if ((name && (typeof name !== 'string' || name.trim().length === 0 || name.length > 50)) || (color && (typeof color !== 'string' || !/^#[0-9a-f]{6}$/i.test(color)))) {
+        return res.status(400).json({ message: 'Invalid input data.' });
+    }
+    const updates = { name: name?.trim(), color };
     const { userId } = req.sessionData!;
     const labels = await dbService.updateLabel(id, updates, userId);
     res.json({ labels });
 });
 
-app.delete('/api/labels/:id', async (req: express.Request, res: express.Response) => {
+app.delete('/api/labels/:id', async (req: Request, res: Response) => {
     const { id: labelId } = req.params;
     const { credentials, userId } = req.sessionData!;
 
@@ -242,22 +280,28 @@ app.delete('/api/labels/:id', async (req: express.Request, res: express.Response
 });
 
 // Folders
-app.post('/api/folders', async (req: express.Request, res: express.Response) => {
+app.post('/api/folders', async (req: Request, res: Response) => {
     const { name } = req.body;
+    if (typeof name !== 'string' || name.trim().length === 0 || name.length > 50) {
+        return res.status(400).json({ message: 'Folder name must be a non-empty string up to 50 characters.' });
+    }
     const { userId } = req.sessionData!;
-    const folders = await dbService.createFolder(name, userId);
+    const folders = await dbService.createFolder(name.trim(), userId);
     res.json({ folders });
 });
 
-app.patch('/api/folders/:id', async (req: express.Request, res: express.Response) => {
+app.patch('/api/folders/:id', async (req: Request, res: Response) => {
     const { id } = req.params;
     const { newName } = req.body;
+    if (typeof newName !== 'string' || newName.trim().length === 0 || newName.length > 50) {
+        return res.status(400).json({ message: 'Folder name must be a non-empty string up to 50 characters.' });
+    }
     const { userId } = req.sessionData!;
-    const folders = await dbService.updateFolder(id, newName, userId);
+    const folders = await dbService.updateFolder(id, newName.trim(), userId);
     res.json({ folders });
 });
 
-app.delete('/api/folders/:id', async (req: express.Request, res: express.Response) => {
+app.delete('/api/folders/:id', async (req: Request, res: Response) => {
     const { id } = req.params;
     const { credentials, userId } = req.sessionData!;
     const folderToDelete = await dbService.getFolderById(id, userId);
@@ -270,7 +314,7 @@ app.delete('/api/folders/:id', async (req: express.Request, res: express.Respons
     res.json({ folders, emails });
 });
 
-app.post('/api/folders/sync', async (req: express.Request, res: express.Response) => {
+app.post('/api/folders/sync', async (req: Request, res: Response) => {
     try {
         const { credentials, userId } = req.sessionData!;
         const imapFolders = await mailService.getImapFolders(credentials);
@@ -282,10 +326,13 @@ app.post('/api/folders/sync', async (req: express.Request, res: express.Response
     }
 });
 
-app.patch('/api/folders/:id/subscription', async (req: express.Request, res: express.Response) => {
+app.patch('/api/folders/:id/subscription', async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
         const { isSubscribed } = req.body;
+        if (typeof isSubscribed !== 'boolean') {
+             return res.status(400).json({ message: 'Invalid input.' });
+        }
         const { userId } = req.sessionData!;
         const folders = await dbService.updateFolderSubscription(id, isSubscribed, userId);
         res.json({ folders });
@@ -296,15 +343,21 @@ app.patch('/api/folders/:id/subscription', async (req: express.Request, res: exp
 });
 
 // Settings
-app.post('/api/settings', async (req: express.Request, res: express.Response) => {
+app.post('/api/settings', async (req: Request, res: Response) => {
+    if (typeof req.body !== 'object' || req.body === null) {
+        return res.status(400).json({ message: 'Invalid settings format.' });
+    }
     const { userId } = req.sessionData!;
     const settings = await dbService.updateSettings(req.body, userId);
     res.json({ settings });
 });
 
-app.post('/api/onboarding', async (req: express.Request, res: express.Response) => {
+app.post('/api/onboarding', async (req: Request, res: Response) => {
     const { userId } = req.sessionData!;
     const onboardingData = req.body;
+    if (typeof onboardingData !== 'object' || onboardingData === null || typeof onboardingData.displayName !== 'string' || onboardingData.displayName.trim().length === 0) {
+        return res.status(400).json({ message: 'Invalid onboarding data. Display name is required.' });
+    }
     try {
         const result = await dbService.completeOnboarding(userId, onboardingData);
         res.json(result);
@@ -314,9 +367,12 @@ app.post('/api/onboarding', async (req: express.Request, res: express.Response) 
     }
 });
 
-app.patch('/api/settings/profile', async (req: express.Request, res: express.Response) => {
+app.patch('/api/settings/profile', async (req: Request, res: Response) => {
     const { userId } = req.sessionData!;
     const profileData = req.body;
+    if (typeof profileData !== 'object' || profileData === null || typeof profileData.displayName !== 'string' || profileData.displayName.trim().length === 0) {
+        return res.status(400).json({ message: 'Invalid profile data. Display name is required.' });
+    }
     try {
         const settings = await dbService.updateProfileSettings(userId, profileData);
         res.json({ settings });
@@ -328,66 +384,82 @@ app.patch('/api/settings/profile', async (req: express.Request, res: express.Res
 
 
 // Contacts & Groups
-app.post('/api/contacts', async (req: express.Request, res: express.Response) => {
+app.post('/api/contacts', async (req: Request, res: Response) => {
     const contactData = req.body;
+    if (!contactData || typeof contactData.name !== 'string' || contactData.name.trim().length === 0 || typeof contactData.email !== 'string' || contactData.email.trim().length === 0) {
+        return res.status(400).json({ message: 'Invalid contact data. Name and email are required.' });
+    }
     const { userId } = req.sessionData!;
     const { contacts, newContactId } = await dbService.addContact(contactData, userId);
     res.json({ contacts, newContactId });
 });
 
-app.put('/api/contacts/:id', async (req: express.Request, res: express.Response) => {
+app.put('/api/contacts/:id', async (req: Request, res: Response) => {
     const { id } = req.params;
     const updatedContact = req.body;
+    if (!updatedContact || typeof updatedContact.name !== 'string' || updatedContact.name.trim().length === 0 || typeof updatedContact.email !== 'string' || updatedContact.email.trim().length === 0) {
+        return res.status(400).json({ message: 'Invalid contact data. Name and email are required.' });
+    }
     const { userId } = req.sessionData!;
     const contacts = await dbService.updateContact(id, updatedContact, userId);
     res.json({ contacts });
 });
 
-app.delete('/api/contacts/:id', async (req: express.Request, res: express.Response) => {
+app.delete('/api/contacts/:id', async (req: Request, res: Response) => {
     const { id } = req.params;
     const { userId } = req.sessionData!;
     const { contacts, groups } = await dbService.deleteContact(id, userId);
     res.json({ contacts, groups });
 });
 
-app.post('/api/contacts/import', async (req: express.Request, res: express.Response) => {
+app.post('/api/contacts/import', async (req: Request, res: Response) => {
     const { newContacts } = req.body;
+    if (!Array.isArray(newContacts)) {
+        return res.status(400).json({ message: 'Invalid input. Expected an array of contacts.' });
+    }
     const { userId } = req.sessionData!;
     const result = await dbService.importContacts(newContacts, userId);
     res.json(result);
 });
 
-app.post('/api/contact-groups', async (req: express.Request, res: express.Response) => {
+app.post('/api/contact-groups', async (req: Request, res: Response) => {
     const { name } = req.body;
+    if (typeof name !== 'string' || name.trim().length === 0 || name.length > 50) {
+        return res.status(400).json({ message: 'Group name must be a non-empty string up to 50 characters.' });
+    }
     const { userId } = req.sessionData!;
-    const groups = await dbService.createContactGroup(name, userId);
+    const groups = await dbService.createContactGroup(name.trim(), userId);
     res.json({ groups });
 });
 
-app.patch('/api/contact-groups/:id', async (req: express.Request, res: express.Response) => {
+app.patch('/api/contact-groups/:id', async (req: Request, res: Response) => {
     const { id } = req.params;
     const { newName } = req.body;
+    if (typeof newName !== 'string' || newName.trim().length === 0 || newName.length > 50) {
+        return res.status(400).json({ message: 'Group name must be a non-empty string up to 50 characters.' });
+    }
     const { userId } = req.sessionData!;
-    const groups = await dbService.renameContactGroup(id, newName, userId);
+    const groups = await dbService.renameContactGroup(id, newName.trim(), userId);
     res.json({ groups });
 });
 
-app.delete('/api/contact-groups/:id', async (req: express.Request, res: express.Response) => {
+app.delete('/api/contact-groups/:id', async (req: Request, res: Response) => {
     const { id } = req.params;
     const { userId } = req.sessionData!;
     const groups = await dbService.deleteContactGroup(id, userId);
     res.json({ groups });
 });
 
-app.post('/api/contact-groups/:id/members', async (req: express.Request, res: express.Response) => {
+app.post('/api/contact-groups/:id/members', async (req: Request, res: Response) => {
     const { id } = req.params;
     const { contactId } = req.body;
+    if (typeof contactId !== 'string') return res.status(400).json({ message: 'Invalid contactId.' });
     const { userId } = req.sessionData!;
     const groups = await dbService.addContactToGroup(id, contactId, userId);
     res.json({ groups });
 });
 
-app.delete('/api/contact-groups/:id/members/:contactId', async (req: express.Request, res: express.Response) => {
+app.delete('/api/contact-groups/:id/members/:contactId', async (req: Request, res: Response) => {
     const { id, contactId } = req.params;
     const { userId } = req.sessionData!;
     const groups = await dbService.removeContactFromGroup(id, contactId, userId);
@@ -400,7 +472,7 @@ const __dirname = path.dirname(new URL(import.meta.url).pathname);
 const buildPath = path.resolve(__dirname, '..', 'dist');
 app.use(express.static(buildPath));
 
-app.get('*', (req: express.Request, res: express.Response) => {
+app.get('*', (req: Request, res: Response) => {
     res.sendFile(path.join(buildPath, 'index.html'));
 });
 

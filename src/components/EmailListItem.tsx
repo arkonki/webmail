@@ -98,11 +98,11 @@ const ConversationListItem: React.FC<ConversationListItemProps> = ({ conversatio
       draggable="true"
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
-      className={`group flex items-center px-2 py-3 border-b border-outline dark:border-dark-outline transition-colors duration-150 relative ${
+      className={`group flex items-center px-2 py-2 border-b border-outline dark:border-dark-outline transition-colors duration-150 relative ${
         isFocused ? 'bg-primary/10 dark:bg-primary/20' : 'hover:bg-gray-100 dark:hover:bg-dark-surface-container'
       } ${!conversation.isRead && !isDraftOrScheduled ? 'bg-white dark:bg-dark-surface font-bold' : 'bg-surface dark:bg-dark-surface'}`}
     >
-        <div className="flex items-center pl-2 pr-4" onClick={handleCheckboxClick}>
+        <div className="flex items-center pl-2 pr-3" onClick={handleCheckboxClick}>
              <input
                 type="checkbox"
                 checked={isChecked}
@@ -110,15 +110,15 @@ const ConversationListItem: React.FC<ConversationListItemProps> = ({ conversatio
                 className="form-checkbox h-5 w-5 text-primary rounded border-gray-300 dark:border-gray-600 bg-transparent dark:bg-gray-800 focus:ring-primary cursor-pointer"
             />
         </div>
-        <div onClick={handleContainerClick} className="flex items-center w-full cursor-pointer">
-            <button onClick={handleStarClick} className="p-2 mr-2 rounded-full hover:bg-yellow-100 dark:hover:bg-yellow-500/20 focus:outline-none">
+        <div onClick={handleContainerClick} className="flex items-center w-full cursor-pointer min-w-0">
+            <button onClick={handleStarClick} className="p-1.5 mr-1 rounded-full hover:bg-yellow-100 dark:hover:bg-yellow-500/20 focus:outline-none">
             {isStarred ? <StarIconSolid className="w-5 h-5 text-yellow-500" /> : <StarIconOutline className="w-5 h-5 text-gray-400 dark:text-gray-500" />}
             </button>
-            <div className={`w-32 truncate mr-4 ${!conversation.isRead && !isDraftOrScheduled ? 'text-gray-900 dark:text-gray-100 font-bold' : 'text-gray-600 dark:text-gray-400'}`}>
+            <div className={`w-28 truncate mr-3 text-sm ${!conversation.isRead && !isDraftOrScheduled ? 'text-gray-900 dark:text-gray-100 font-bold' : 'text-gray-600 dark:text-gray-400'}`}>
                 {getParticipantsDisplay()}
                 {conversation.emails.length > 1 && <span className="ml-1 text-xs">({conversation.emails.length})</span>}
             </div>
-            <div className="flex-grow truncate flex items-center gap-2">
+            <div className="flex-grow truncate flex items-center gap-2 min-w-0">
               <div className="flex-shrink-0">
                   {conversation.folderId === SystemFolder.SCHEDULED && (
                     <span className="inline-flex items-center text-xs font-medium mr-2 px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300">
@@ -132,23 +132,23 @@ const ConversationListItem: React.FC<ConversationListItemProps> = ({ conversatio
                     </span>
                   )}
               </div>
-              <div className="truncate">
+              <div className="truncate text-sm">
                   <span className={` ${!conversation.isRead && !isDraftOrScheduled ? 'text-gray-900 dark:text-gray-100 font-bold' : 'text-gray-800 dark:text-gray-300'}`}>{conversation.subject}</span>
                   <span className="ml-2 text-gray-500 dark:text-gray-400 font-normal">- {latestEmail.snippet}</span>
               </div>
-              <div className="flex items-center gap-1 flex-shrink-0">
+              <div className="flex items-center gap-1 flex-shrink-0 ml-auto">
                     {userLabels.map(label => (
-                        <div key={label.id} className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: `${label.color}33`, color: label.color }}>
+                        <div key={label.id} className="text-xs font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: `${label.color}33`, color: label.color }}>
                             {label.name}
                         </div>
                     ))}
                 </div>
             </div>
-            <div className="flex items-center">
+            <div className="flex items-center ml-2 flex-shrink-0">
                 {conversation.hasAttachments && <PaperClipIcon className="w-4 h-4 text-gray-400 dark:text-gray-500 mr-2" />}
-                <div className={`ml-4 text-xs whitespace-nowrap transition-opacity duration-200 group-hover:opacity-0 ${!conversation.isRead && !isDraftOrScheduled ? 'text-primary font-bold' : 'text-gray-600 dark:text-gray-400'}`}>{formatDate(conversation.lastTimestamp)}</div>
-                <div className="absolute right-4 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center bg-inherit">
-                    <button onClick={handleDeleteClick} className="p-2 text-gray-500 dark:text-gray-300 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 focus:outline-none">
+                <div className={`text-xs whitespace-nowrap transition-opacity duration-200 group-hover:opacity-0 ${!conversation.isRead && !isDraftOrScheduled ? 'text-primary font-bold' : 'text-gray-600 dark:text-gray-400'}`}>{formatDate(conversation.lastTimestamp)}</div>
+                <div className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center bg-inherit">
+                    <button onClick={handleDeleteClick} className="p-1.5 text-gray-500 dark:text-gray-300 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 focus:outline-none">
                         <TrashIcon className="w-5 h-5" />
                     </button>
                 </div>
