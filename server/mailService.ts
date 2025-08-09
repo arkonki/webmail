@@ -4,7 +4,7 @@ import nodemailer from 'nodemailer';
 import Imap from 'node-imap';
 import { simpleParser, ParsedMail, AddressObject } from 'mailparser';
 import sanitizeHtml from 'sanitize-html';
-import { Email, User, SystemFolder, SystemLabel } from '../src/types';
+import { Email, User, SystemFolder, SystemLabel } from '../src/types.js';
 
 export interface Credentials {
     user: string;
