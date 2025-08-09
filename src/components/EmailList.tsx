@@ -1,3 +1,5 @@
+
+
 import React, { useState } from 'react';
 import { useAppContext } from '../context/AppContext';
 import { TrashIcon } from './icons/TrashIcon';
@@ -12,6 +14,10 @@ import LabelManagerPopover from './LabelManagerPopover';
 import { SystemFolder } from '../types';
 import { FolderArrowDownIcon } from './icons/FolderArrowDownIcon';
 import MoveToPopover from './MoveToPopover';
+import { ChevronLeftIcon } from './icons/ChevronLeftIcon';
+import { ChevronRightIcon } from './icons/ChevronRightIcon';
+
+const ITEMS_PER_PAGE = 50;
 
 const BulkActionBar = () => {
     const { 
@@ -82,6 +88,39 @@ const BulkActionBar = () => {
     );
 };
 
+const PaginationControls = () => {
+    const { currentPage, totalPages, totalItems, setCurrentPage } = useAppContext();
+
+    if (totalItems <= ITEMS_PER_PAGE) {
+        return null;
+    }
+
+    const startItem = Math.min((currentPage - 1) * ITEMS_PER_PAGE + 1, totalItems);
+    const endItem = Math.min(currentPage * ITEMS_PER_PAGE, totalItems);
+
+    return (
+        <div className="flex items-center gap-4 text-sm text-gray-600 dark:text-gray-400 flex-shrink-0">
+            <span>{startItem}-{endItem} of {totalItems}</span>
+            <button
+                onClick={() => setCurrentPage(currentPage - 1)}
+                disabled={currentPage === 1}
+                className="p-2 rounded-full disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-200 dark:hover:bg-gray-700"
+                aria-label="Previous page"
+            >
+                <ChevronLeftIcon className="w-5 h-5" />
+            </button>
+            <button
+                onClick={() => setCurrentPage(currentPage + 1)}
+                disabled={currentPage >= totalPages}
+                className="p-2 rounded-full disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-200 dark:hover:bg-gray-700"
+                aria-label="Next page"
+            >
+                <ChevronRightIcon className="w-5 h-5" />
+            </button>
+        </div>
+    );
+};
+
 
 const EmailList: React.FC = () => {
   const { currentSelection, searchQuery, selectedConversationIds, selectAllConversations, deselectAllConversations, displayedConversations, labels, userFolders } = useAppContext();
@@ -146,8 +185,11 @@ const EmailList: React.FC = () => {
                     />
                     <h2 className="text-lg font-medium text-on-surface dark:text-dark-on-surface truncate">{listTitle}</h2>
                 </div>
-                <div className="flex-grow max-w-lg">
-                    <SearchBar />
+                <div className="flex items-center gap-4">
+                    <div className="flex-grow max-w-lg hidden md:block">
+                        <SearchBar />
+                    </div>
+                    <PaginationControls />
                 </div>
             </div>
         )}

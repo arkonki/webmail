@@ -1,3 +1,4 @@
+
 import { Contact, Email, User, Label, SystemLabel, ContactGroup, SystemFolder, UserFolder } from '../types';
 
 export let mockUser: User = {

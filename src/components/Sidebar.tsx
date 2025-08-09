@@ -41,9 +41,10 @@ interface NavItemProps {
   onEdit?: () => void;
   onDelete?: () => void;
   isEditable?: boolean;
+  count?: number;
 }
 
-const NavItem: React.FC<NavItemProps> = ({ name, icon, isActive, onClick, isSidebarCollapsed, onDrop, onEdit, onDelete, isEditable }) => {
+const NavItem: React.FC<NavItemProps> = ({ name, icon, isActive, onClick, isSidebarCollapsed, onDrop, onEdit, onDelete, isEditable, count = 0 }) => {
   const [isDropTarget, setIsDropTarget] = useState(false);
   const dragCounter = useRef(0);
 
@@ -84,6 +85,11 @@ const NavItem: React.FC<NavItemProps> = ({ name, icon, isActive, onClick, isSide
         {icon}
         {!isSidebarCollapsed && <span className="truncate">{name}</span>}
       </div>
+      {!isSidebarCollapsed && count > 0 && (
+          <span className={`px-2 py-0.5 text-xs font-bold rounded-full transition-opacity group-hover:opacity-0 ${isActive ? 'bg-white text-primary' : 'bg-primary/10 dark:bg-primary/20 text-primary dark:text-blue-300'}`}>
+              {count}
+          </span>
+      )}
        {isEditable && !isSidebarCollapsed && (
         <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center transition-opacity duration-200 opacity-0 group-hover:opacity-100 bg-inherit pl-2">
             <button onClick={(e) => { e.stopPropagation(); onEdit?.(); }} className="p-1 rounded-full hover:bg-black/10 dark:hover:bg-white/10"><PencilIcon className="w-4 h-4" /></button>
@@ -98,7 +104,7 @@ const NavItem: React.FC<NavItemProps> = ({ name, icon, isActive, onClick, isSide
 const Sidebar: React.FC = () => {
   const { 
     currentSelection, setCurrentSelection, openCompose, labels, userFolders, isSidebarCollapsed, 
-    toggleLabel, moveConversations, deleteFolder, view 
+    toggleLabel, moveConversations, deleteFolder, view, unreadCounts
   } = useAppContext();
   const [isLabelModalOpen, setIsLabelModalOpen] = useState(false);
   const [editingLabel, setEditingLabel] = useState<Label | null>(null);
@@ -171,6 +177,7 @@ const Sidebar: React.FC = () => {
                 onClick={() => setCurrentSelection('folder', folder)}
                 isSidebarCollapsed={isSidebarCollapsed}
                 onDrop={(e) => handleDropOnFolder(e, folder)}
+                count={unreadCounts[folder]}
               />
             ))}
              <NavItem
@@ -180,6 +187,7 @@ const Sidebar: React.FC = () => {
                 isActive={currentSelection.type === 'label' && currentSelection.id === SystemLabel.STARRED && view === 'mail'}
                 onClick={() => setCurrentSelection('label', SystemLabel.STARRED)}
                 isSidebarCollapsed={isSidebarCollapsed}
+                count={unreadCounts[SystemLabel.STARRED]}
               />
           </ul>
            <div className="mt-4 pt-4 border-t border-outline dark:border-dark-outline">
@@ -204,6 +212,7 @@ const Sidebar: React.FC = () => {
                     onEdit={() => handleOpenFolderModal(folder)}
                     onDelete={() => handleDeleteFolder(folder)}
                     isEditable
+                    count={unreadCounts[folder.id]}
                   />
                 ))}
               </ul>
@@ -230,6 +239,7 @@ const Sidebar: React.FC = () => {
                     onEdit={() => handleOpenLabelModal(label)}
                     onDelete={() => { /* Should be handled in settings */}}
                     isEditable
+                    count={unreadCounts[label.id]}
                   />
                 ))}
               </ul>

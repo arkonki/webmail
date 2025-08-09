@@ -84,12 +84,12 @@ const ComposeModal: React.FC = () => {
                     const formattedDate = new Date(email.timestamp).toLocaleString();
                     const replyContent = bodyPrefix ? `<p>${bodyPrefix}</p>` : '<p><br></p>';
                     const signature = appSettings.signature.isEnabled ? `<br><br>${appSettings.signature.body}` : '';
-                    finalBody = `${replyContent}${signature}<br><blockquote class="dark:border-gray-600">On ${formattedDate}, ${email.senderName} <${email.senderEmail}> wrote:<br>${email.body}</blockquote>`;
+                    finalBody = `${replyContent}${signature}<br><blockquote class="dark:border-gray-600">On ${formattedDate}, ${email.senderName} &lt;${email.senderEmail}&gt; wrote:<br>${email.body}</blockquote>`;
                 } else if (action === ActionType.FORWARD && email) {
                     setSubject(email.subject.startsWith('Fwd:') ? email.subject : `Fwd: ${email.subject}`);
                     const formattedDate = new Date(email.timestamp).toLocaleString();
                     const signature = appSettings.signature.isEnabled ? `<br><br>${appSettings.signature.body}` : '';
-                    finalBody = `<p><br></p>${signature}<br><blockquote class="dark:border-gray-600">--- Forwarded message ---<br><b>From:</b> ${email.senderName} <${email.senderEmail}><br><b>Date:</b> ${formattedDate}<br><b>Subject:</b> ${email.subject}<br><br>${email.body}</blockquote>`;
+                    finalBody = `<p><br></p>${signature}<br><blockquote class="dark:border-gray-600">--- Forwarded message ---<br><b>From:</b> ${email.senderName} &lt;${email.senderEmail}&gt;<br><b>Date:</b> ${formattedDate}<br><b>Subject:</b> ${email.subject}<br><br>${email.body}</blockquote>`;
                 } else {
                     finalBody = appSettings.signature.isEnabled ? `<p><br></p><br>${appSettings.signature.body}` : '';
                 }

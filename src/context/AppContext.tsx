@@ -1,3 +1,5 @@
+
+
 import React, { createContext, useState, useContext, ReactNode, useMemo, useCallback, useEffect } from 'react';
 import { Email, ActionType, Label, Conversation, User, AppSettings, Signature, AutoResponder, Rule, SystemLabel, Contact, ContactGroup, SystemFolder, UserFolder } from '../types';
 import { useToast } from './ToastContext';
@@ -28,6 +30,8 @@ type Theme = 'light' | 'dark';
 type View = 'mail' | 'settings' | 'contacts';
 type SelectionType = 'folder' | 'label';
 
+const ITEMS_PER_PAGE = 50;
+
 interface AppContextType {
   // State
   user: User | null;
@@ -51,6 +55,10 @@ interface AppContextType {
   selectedContactId: string | null;
   selectedGroupId: string | null;
   isLoading: boolean;
+  unreadCounts: { [key: string]: number };
+  currentPage: number;
+  totalPages: number;
+  totalItems: number;
   
   // Auth
   login: (email: string, pass: string) => void;
@@ -61,6 +69,7 @@ interface AppContextType {
   setCurrentSelection: (type: SelectionType, id: string) => void;
   setSelectedConversationId: (id: string | null) => void;
   setSearchQuery: (query: string) => void;
+  setCurrentPage: (page: number) => void;
   
   // Compose
   openCompose: (config?: Partial<Omit<ComposeState, 'isOpen'>>) => void;
@@ -189,6 +198,11 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
   const [view, setView] = useState<View>('mail');
   const [isLoading, setIsLoading] = useState(true);
   const [pendingSend, setPendingSend] = useState<PendingSend | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [currentSelection, searchQuery]);
 
 
   const checkUserSession = useCallback(async () => {
@@ -294,8 +308,25 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
       .sort((a, b) => new Date(b.lastTimestamp).getTime() - new Date(a.lastTimestamp).getTime());
   }, [emails, user, t]);
 
+  const unreadCounts = useMemo(() => {
+    const counts: { [key: string]: number } = {};
+    allConversations.forEach(c => {
+      if (!c.isRead) {
+        // Count for folder
+        counts[c.folderId] = (counts[c.folderId] || 0) + 1;
+        // Count for labels (excluding spam/trash folders)
+        if (c.folderId !== SystemFolder.SPAM && c.folderId !== SystemFolder.TRASH) {
+          c.labelIds.forEach(labelId => {
+            counts[labelId] = (counts[labelId] || 0) + 1;
+          });
+        }
+      }
+    });
+    return counts;
+  }, [allConversations]);
 
-  const displayedConversations = useMemo(() => {
+
+  const filteredConversations = useMemo(() => {
     let baseList = allConversations;
     
     if (currentSelection.type === 'folder') {
@@ -359,6 +390,15 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
 
   }, [allConversations, currentSelection, searchQuery]);
   
+  const totalItems = filteredConversations.length;
+  const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE);
+
+  const displayedConversations = useMemo(() => {
+    const start = (currentPage - 1) * ITEMS_PER_PAGE;
+    const end = start + ITEMS_PER_PAGE;
+    return filteredConversations.slice(start, end);
+  }, [filteredConversations, currentPage]);
+
 
   const setCurrentSelectionCallback = useCallback((type: SelectionType, id: string) => {
     setView('mail');
@@ -820,9 +860,9 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
   const setViewCallback = useCallback((newView: View) => { setView(newView); setSelectedConversationId(null); setFocusedConversationId(null); setSearchQuery(''); setSelectedConversationIds(new Set()); setSelectedContactId(null); }, []);
 
   const contextValue: AppContextType = {
-    user, emails, conversations: allConversations, labels, userFolders, currentSelection, selectedConversationId, focusedConversationId, composeState, searchQuery, selectedConversationIds, theme, displayedConversations, isSidebarCollapsed, view, appSettings, contacts, contactGroups, selectedContactId, selectedGroupId, isLoading,
+    user, emails, conversations: allConversations, labels, userFolders, currentSelection, selectedConversationId, focusedConversationId, composeState, searchQuery, selectedConversationIds, theme, displayedConversations, isSidebarCollapsed, view, appSettings, contacts, contactGroups, selectedContactId, selectedGroupId, isLoading, unreadCounts, currentPage, totalPages, totalItems,
     login, logout, checkUserSession,
-    setCurrentSelection: setCurrentSelectionCallback, setSelectedConversationId, setSearchQuery,
+    setCurrentSelection: setCurrentSelectionCallback, setSelectedConversationId, setSearchQuery, setCurrentPage,
     openCompose, closeCompose, toggleMinimizeCompose, sendEmail, cancelSend, saveDraft, deleteDraft,
     moveConversations,
     toggleLabel, deleteConversation, archiveConversation, markAsRead, markAsUnread, markAsSpam, markAsNotSpam,
