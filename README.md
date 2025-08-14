@@ -25,11 +25,12 @@ This project is a complete, full-stack modern webmail client built with React, T
 - **Frontend**: React, TypeScript, Tailwind CSS, Vite, `i18next`
 - **Backend**: Node.js, Express.js, `sanitize-html`, `helmet`
 - **Database**: PostgreSQL (via `pg` client)
-- **Mail Protocols**: `node-imap` for IMAP, `nodemailer` for SMTP
+- **Mail Protocols**: `imapflow` for IMAP, `nodemailer` for SMTP
+- **Real-time**: WebSockets (via `ws`)
 
 ---
 
-## Getting Started
+## Local Development
 
 Follow these instructions to get the project running on your local machine for development and testing.
 
@@ -68,24 +69,13 @@ Follow these instructions to get the project running on your local machine for d
       ENCRYPTION_KEY="YOUR_GENERATED_64_CHARACTER_HEX_STRING"
       ```
 
-5.  **Configure the Mail Server:**
-    - Open the file `server/mailService.ts`.
-    - Find the `TODO` comments inside the `getImapConfig` and `getSmtpConfig` functions.
-    - Replace the placeholder `host` and `port` details with the actual server details for your mail provider.
-
 ### Running the Application
-
-There are two primary ways to run this application:
-
-#### 1. Development Mode (Hot-Reloading Enabled)
-
-For development, you run the frontend and backend in two separate terminals.
 
 -   **Terminal 1: Start the Backend API Server**
     ```bash
     npm run serve
     ```
-    This starts the Node.js/Express server on `http://localhost:3001`, which will connect to your PostgreSQL database.
+    This starts the Node.js/Express server on `http://localhost:3001`.
 
 -   **Terminal 2: Start the Frontend Dev Server**
     ```bash
@@ -95,168 +85,128 @@ For development, you run the frontend and backend in two separate terminals.
 
 -   **Access the App:** Open your browser to the address provided by Vite (e.g., `http://localhost:5173`).
 
-#### 2. Production Mode (Locally)
-
-This method mimics how your application would run on a production server.
-
--   **Build and Start the Application**
-    ```bash
-    npm start
-    ```
-    This single command first builds the optimized frontend and then starts the Express server. The server will handle both the API requests and serve the built frontend files.
-
--   **Access the App:** Open your browser to `http://localhost:3001`.
-
 ---
 
-## Deployment (Single Private Server)
+## Deployment
 
-This project is configured to be deployed as a single, self-contained application on one server.
+This application is designed to be deployed as a single Node.js process. The frontend is built into static files, which are served by the same Express server that provides the API and WebSocket connections.
 
-### Build and Run for Production
+### Recommended: Deploying on Render
 
-1.  **Install Dependencies**: Make sure all dependencies are installed on your server:
-    ```bash
-    npm install
-    ```
-    
-2.  **Configure Environment**: Ensure the `DATABASE_URL` and `ENCRYPTION_KEY` environment variables are set on your server, pointing to your production PostgreSQL database and your secret key.
+Render is a modern cloud platform that makes it easy to build and run applications.
 
-3.  **Build and Start the Server**: Use the `start` script. For production, it's highly recommended to use a process manager like `pm2` and a UNIX socket (see below).
-    ```bash
-    npm start
-    ```
+1.  **Fork this repository** to your own GitHub account.
 
-4.  **Access Your Application**: Your webmail client will now be running. It is recommended to put it behind a reverse proxy like Apache or Nginx.
+2.  **Create a new PostgreSQL Database** on Render.
+    -   Go to your Render Dashboard and click "New" -> "PostgreSQL".
+    -   Give it a name (e.g., `webmail-db`) and choose a region.
+    -   Once created, copy the **"Internal Connection String"**. You will use this as your `DATABASE_URL`.
 
-### Production Considerations
+3.  **Create a new Web Service** on Render.
+    -   Click "New" -> "Web Service".
+    -   Connect the repository you forked.
+    -   Configure the service settings:
+        -   **Name**: `webmail-client` (or your choice)
+        -   **Region**: Choose the same region as your database.
+        -   **Build Command**: `npm install && npm run build`
+        -   **Start Command**: `npm start`
 
-- **Process Management & Reverse Proxy (Recommended)**: For a robust, secure, and performant production deployment, you should run the application with a process manager like `pm2` and use a reverse proxy (Apache, Nginx) to handle incoming traffic and SSL. The server is configured to listen on a more secure **UNIX socket** when the `SOCKET_PATH` environment variable is provided.
-    
-    1.  **Start the App with `pm2` using a Socket**:
+4.  **Add Environment Variables**.
+    -   Under the "Environment" tab for your new Web Service, add two "Secret Files" or "Environment Variables":
+    -   `DATABASE_URL`: Paste the internal connection string from your Render PostgreSQL database.
+    -   `ENCRYPTION_KEY`: This is a critical secret. Generate a new 64-character hex string by running this command in your local terminal:
+        ```bash
+        node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+        ```
+        Paste the generated key as the value for `ENCRYPTION_KEY`.
+
+5.  **Deploy**.
+    -   Click "Create Web Service". Render will automatically build and deploy your application. Your webmail client will be live at the URL provided by Render.
+
+### Alternative: VPS / Dedicated Server (with Nginx)
+
+For users who prefer to manage their own infrastructure, Nginx is a highly recommended reverse proxy.
+
+1.  **Build the Application**
+    -   On your server, after pulling the latest code, run the build command:
+        ```bash
+        # Install dependencies
+        npm install
+        # Build the client and server code
+        npm run build
+        ```
+    -   This creates an optimized version of the entire application in the `dist/` directory.
+
+2.  **Run the Application**
+    -   It's highly recommended to use a process manager like `pm2` to keep your app running.
         ```bash
         # Install pm2 globally if you haven't already
         npm install pm2 -g
         
-        # Start the app, pointing to a socket file.
-        # Ensure the directory exists and your user has permissions to write to it.
-        # The DATABASE_URL and ENCRYPTION_KEY must also be available in the environment.
-        SOCKET_PATH="/var/run/webmail.socket" pm2 start "npm run start" --name webmail-client
+        # Start the application using pm2
+        pm2 start "npm run start" --name webmail-client
         ```
-    
-    2.  **Configure File Permissions**: The application's user needs to share a group with the web server so it can access the socket. For Debian/Ubuntu systems with Apache/Nginx, this is typically the `www-data` group.
-        ```bash
-        # Add your application user to the www-data group
-        sudo usermod -aG www-data your_user_name
-        
-        # You may need to log out and log back in for the group change to take effect.
-        ```
-        The Node.js application will automatically set the correct `660` permissions on the socket file, allowing the user and group members to read/write.
-    
-    3.  **Configure Your Reverse Proxy**:
-        
-        **Apache2 Example (`<VirtualHost>` block):**
-        This configuration serves the frontend and forwards all API and WebSocket traffic to the Node.js app via the socket. It requires `mod_proxy`, `mod_proxy_http`, `mod_proxy_wstunnel`, and `mod_rewrite`.
-        ```apache
-        # Enable required modules:
-        # sudo a2enmod proxy proxy_http proxy_wstunnel rewrite
-        
-        <VirtualHost *:443>
-            ServerName yourdomain.com
-            DocumentRoot "/path/to/your/webmail/dist"
 
-            # SSL Configuration (recommended with Let's Encrypt)...
-            SSLEngine on
-            SSLCertificateFile /etc/letsencrypt/live/yourdomain.com/fullchain.pem
-            SSLCertificateKeyFile /etc/letsencrypt/live/yourdomain.com/privkey.pem
-            
-            # WebSocket Proxying for /ws
-            # This rule handles the protocol upgrade for real-time communication
-            RewriteEngine On
-            RewriteCond %{HTTP:Upgrade} websocket [NC]
-            RewriteCond %{HTTP:Connection} upgrade [NC]
-            RewriteRule "^/?ws(.*)" "ws://unix:/var/run/webmail.socket/ws$1" [P,L]
-
-            # HTTP API Proxying for /api
-            ProxyPass "/api/" "http://unix:/var/run/webmail.socket/api/"
-            ProxyPassReverse "/api/" "http://unix:/var/run/webmail.socket/api/"
-            
-            # Serve frontend files, with a fallback to index.html for client-side routing
-            <Directory "/path/to/your/webmail/dist">
-                AllowOverride All
-                Require all granted
-                FallbackResource /index.html
-            </Directory>
-        </VirtualHost>
-        ```
-        
-        **Nginx Example (`server` block):**
+3.  **Configure Nginx**
+    -   Your Node.js app will be running on a port (default 3001). Configure Nginx to act as a reverse proxy, forwarding public traffic to your app. **This is critical for WebSockets to function correctly.**
+    -   Edit your site's configuration file (e.g., in `/etc/nginx/sites-available/yourdomain.com`).
         ```nginx
         server {
-            listen 443 ssl http2; # Use http2 for better performance
+            listen 80;
+            server_name yourdomain.com;
+            # Redirect all HTTP traffic to HTTPS
+            return 301 https://$host$request_uri;
+        }
+
+        server {
+            listen 443 ssl http2;
             server_name yourdomain.com;
             
-            # SSL Configuration...
+            # SSL Configuration (e.g., using Let's Encrypt)
             ssl_certificate /etc/letsencrypt/live/yourdomain.com/fullchain.pem;
             ssl_certificate_key /etc/letsencrypt/live/yourdomain.com/privkey.pem;
 
+            # Serve the static frontend files
             root /path/to/your/webmail/dist;
             index index.html;
 
-            # Serve static files and fallback to index.html for React Router
             location / {
                 try_files $uri /index.html;
             }
             
-            # API Traffic
+            # Proxy API Traffic
             location /api/ {
-                proxy_pass http://unix:/var/run/webmail.socket;
+                proxy_pass http://127.0.0.1:3001;
                 proxy_set_header Host $host;
                 proxy_set_header X-Real-IP $remote_addr;
                 proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
                 proxy_set_header X-Forwarded-Proto $scheme;
             }
-
-            # WebSocket Traffic
+            
+            # Proxy WebSocket Traffic
             location /ws {
-                proxy_pass http://unix:/var/run/webmail.socket;
+                proxy_pass http://127.0.0.1:3001;
                 proxy_http_version 1.1;
                 proxy_set_header Upgrade $http_upgrade;
                 proxy_set_header Connection "upgrade";
                 proxy_set_header Host $host;
-                proxy_read_timeout 86400s; # Keep connection open
             }
         }
         ```
 
-- **Zero-Downtime Updates**: With `pm2`, you can update the application without any interruption. After you've deployed the new code files to your server, simply run:
-    ```bash
-    # After updating files, reload the app for zero downtime
-    pm2 reload webmail-client
-    ```
-
-- **Automated Deployments (CI/CD)**: For a professional workflow that avoids manual updates, it is highly recommended to set up a CI/CD (Continuous Integration/Continuous Deployment) pipeline using services like **GitHub Actions**. This automates the entire process:
-  1.  **Push Code**: You push your changes to your Git repository.
-  2.  **Build & Test**: The pipeline automatically installs dependencies, runs tests, and builds the production version of your app.
-  3.  **Deploy**: The new files are securely copied to your server, and the `pm2 reload` command is executed to update the live application with zero downtime.
-  This approach significantly improves reliability and efficiency.
-
-- **HTTPS**: You **must** run this application over HTTPS in production to protect data in transit. The reverse proxy examples above show where to add SSL configuration, which can be obtained for free from Let's Encrypt.
+4.  **Zero-Downtime Updates with `pm2`**
+    -   After you've deployed new code files to your server and run `npm run build`, you can reload the application without any interruption:
+        ```bash
+        pm2 reload webmail-client
+        ```
 
 ---
 
 ## Security Considerations
 
-Security is a critical aspect of this application, especially since it handles user credentials. The following measures have been implemented:
-
-- **Data Isolation**: The backend architecture is fully multi-tenant. All data (contacts, labels, settings, etc.) is scoped by a `userId`. The API enforces that a logged-in user can **only** access or modify their own data. This is a critical protection against Insecure Direct Object Reference (IDOR) vulnerabilities.
-
-- **Stateless Architecture**: The server does not maintain persistent connections or state for users between requests. Each API request is self-contained, using a session token to retrieve encrypted credentials from the database, perform the mail server operation, and then immediately discard the credentials and connection. This model is highly scalable and robust against server restarts.
-
-- **Encrypted Credentials at Rest**: User mail server passwords are **never** stored in plaintext. Upon login, the password is encrypted with AES-256-GCM and stored in the session table in the database. It is decrypted only in memory for the brief duration of an API call that requires it. This is protected by a secret `ENCRYPTION_KEY` that must be set in your server environment.
-
-- **HTTP Security Headers**: The `helmet` library is used to set various HTTP headers that protect against common web vulnerabilities like clickjacking, MIME-sniffing, and certain types of XSS attacks.
-
-- **Cross-Site Scripting (XSS) Prevention**: All incoming email content is sanitized on the server-side using `sanitize-html`. This strips any potentially malicious HTML tags (like `<script>`) and attributes before the content is ever sent to the frontend, preventing stored XSS attacks.
-
-- **Information Leakage**: Login error messages are generalized to prevent attackers from determining whether a username is valid or not.
+- **Data Isolation**: The backend is multi-tenant; all data is scoped by `userId`, preventing users from accessing each other's data.
+- **Stateless Architecture**: The server is stateless. Each API request is self-contained, using a session token to retrieve encrypted credentials from the database for the duration of the request only.
+- **Encrypted Credentials at Rest**: User mail server passwords are **never** stored in plaintext. They are encrypted with AES-256-GCM and stored in the session table, protected by a secret `ENCRYPTION_KEY`.
+- **HTTP Security Headers**: Uses `helmet` to protect against common web vulnerabilities.
+- **Cross-Site Scripting (XSS) Prevention**: Incoming email content is sanitized on the server-side using `sanitize-html` to strip potentially malicious code.
+- **Rate Limiting**: The login endpoint is rate-limited to prevent brute-force attacks.

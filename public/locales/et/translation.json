@@ -133,6 +133,8 @@
     "editTitle": "Muuda kausta",
     "createTitle": "Loo kaust",
     "name": "Kausta nimi",
+    "parent": "Ülemkaust",
+    "noParent": "-- Ülemkaust puudub --",
     "cancel": "Tühista",
     "save": "Salvesta"
   },

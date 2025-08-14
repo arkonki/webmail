@@ -133,6 +133,8 @@
     "editTitle": "Editar Carpeta",
     "createTitle": "Crear Carpeta",
     "name": "Nombre de la carpeta",
+    "parent": "Carpeta principal",
+    "noParent": "-- Sin carpeta principal --",
     "cancel": "Cancelar",
     "save": "Guardar"
   },

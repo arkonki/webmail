@@ -27,14 +27,16 @@
     "mailparser": "https://esm.sh/mailparser@^3.7.4",
     "sanitize-html": "https://esm.sh/sanitize-html@^2.17.0",
     "nodemailer": "https://esm.sh/nodemailer@^7.0.5",
-    "node-imap": "https://esm.sh/node-imap@^0.9.6",
+    "imapflow": "https://esm.sh/imapflow@^1.0.166",
     "sqlite": "https://esm.sh/sqlite@^5.1.1",
     "pg": "https://esm.sh/pg@^8.16.3",
     "process": "https://esm.sh/process@^0.11.10",
     "fs": "https://esm.sh/fs@^0.0.1-security",
     "ws": "https://esm.sh/ws@^8.18.0",
     "http": "https://esm.sh/stream-http@^3.2.0",
-    "url": "https://esm.sh/url@^0.11.3"
+    "url": "https://esm.sh/url@^0.11.3",
+    "dotenv/": "https://esm.sh/dotenv@^17.2.1/",
+    "module": "https://esm.sh/module@^1.2.5"
   }
 }
 </script>
@@ -43,7 +45,9 @@
   <body class="bg-surface text-on-surface dark:bg-dark-surface dark:text-dark-on-surface antialiased">
     <div id="root"></div>
     <div id="modal-portal"></div>
+    <div id="debug-portal"></div>
     <div id="toast-container" class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2"></div>
     <script type="module" src="/src/index.tsx"></script>
-  </body>
+  <script type="module" src="/index.tsx"></script>
+</body>
 </html>

@@ -133,6 +133,8 @@
     "editTitle": "Edit Folder",
     "createTitle": "Create Folder",
     "name": "Folder name",
+    "parent": "Parent folder",
+    "noParent": "-- No parent --",
     "cancel": "Cancel",
     "save": "Save"
   },
