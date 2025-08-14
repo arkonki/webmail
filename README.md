@@ -156,8 +156,11 @@ This project is configured to be deployed as a single, self-contained applicatio
     3.  **Configure Your Reverse Proxy**:
         
         **Apache2 Example (`<VirtualHost>` block):**
-        This configuration serves the frontend and forwards all API traffic to the Node.js app via the socket. It requires `mod_proxy` and `mod_proxy_http`.
+        This configuration serves the frontend and forwards all API and WebSocket traffic to the Node.js app via the socket. It requires `mod_proxy`, `mod_proxy_http`, `mod_proxy_wstunnel`, and `mod_rewrite`.
         ```apache
+        # Enable required modules:
+        # sudo a2enmod proxy proxy_http proxy_wstunnel rewrite
+        
         <VirtualHost *:443>
             ServerName yourdomain.com
             DocumentRoot "/path/to/your/webmail/dist"
@@ -167,8 +170,16 @@ This project is configured to be deployed as a single, self-contained applicatio
             SSLCertificateFile /etc/letsencrypt/live/yourdomain.com/fullchain.pem
             SSLCertificateKeyFile /etc/letsencrypt/live/yourdomain.com/privkey.pem
             
-            # Use ProxyPass to forward API requests to the UNIX socket
-            ProxyPass "/api/" "unix:/var/run/webmail.socket|http://localhost/api/"
+            # WebSocket Proxying for /ws
+            # This rule handles the protocol upgrade for real-time communication
+            RewriteEngine On
+            RewriteCond %{HTTP:Upgrade} websocket [NC]
+            RewriteCond %{HTTP:Connection} upgrade [NC]
+            RewriteRule "^/?ws(.*)" "ws://unix:/var/run/webmail.socket/ws$1" [P,L]
+
+            # HTTP API Proxying for /api
+            ProxyPass "/api/" "http://unix:/var/run/webmail.socket/api/"
+            ProxyPassReverse "/api/" "http://unix:/var/run/webmail.socket/api/"
             
             # Serve frontend files, with a fallback to index.html for client-side routing
             <Directory "/path/to/your/webmail/dist">
@@ -182,7 +193,7 @@ This project is configured to be deployed as a single, self-contained applicatio
         **Nginx Example (`server` block):**
         ```nginx
         server {
-            listen 443 ssl;
+            listen 443 ssl http2; # Use http2 for better performance
             server_name yourdomain.com;
             
             # SSL Configuration...
@@ -192,16 +203,28 @@ This project is configured to be deployed as a single, self-contained applicatio
             root /path/to/your/webmail/dist;
             index index.html;
 
+            # Serve static files and fallback to index.html for React Router
             location / {
                 try_files $uri /index.html;
             }
             
+            # API Traffic
             location /api/ {
                 proxy_pass http://unix:/var/run/webmail.socket;
                 proxy_set_header Host $host;
                 proxy_set_header X-Real-IP $remote_addr;
                 proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
                 proxy_set_header X-Forwarded-Proto $scheme;
+            }
+
+            # WebSocket Traffic
+            location /ws {
+                proxy_pass http://unix:/var/run/webmail.socket;
+                proxy_http_version 1.1;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection "upgrade";
+                proxy_set_header Host $host;
+                proxy_read_timeout 86400s; # Keep connection open
             }
         }
         ```
