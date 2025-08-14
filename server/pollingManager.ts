@@ -1,10 +1,10 @@
-import { Response as ExpressResponse } from 'express';
+import type { Response } from 'express';
 import { logger } from './logger';
 
 // Map of userId to a set of active long polling response objects
-const connections = new Map<string, Set<ExpressResponse>>();
+const connections = new Map<string, Set<Response>>();
 
-export function add(userId: string, res: ExpressResponse) {
+export function add(userId: string, res: Response) {
     if (!connections.has(userId)) {
         connections.set(userId, new Set());
     }
@@ -12,7 +12,7 @@ export function add(userId: string, res: ExpressResponse) {
     logger.debug(`[Polling Manager] User ${userId} connected. Total connections for user: ${connections.get(userId)!.size}`);
 }
 
-export function remove(userId: string, res: ExpressResponse) {
+export function remove(userId: string, res: Response) {
     const userConnections = connections.get(userId);
     if (userConnections) {
         userConnections.delete(res);

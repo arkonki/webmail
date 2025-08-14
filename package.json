@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "A modern webmail client UI with server",
   "type": "module",
-  "main": "index.js",
+  "main": "dist/server/index.js",
   "scripts": {
     "dev": "vite",
     "serve": "vite-node server/index.ts",

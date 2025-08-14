@@ -1,6 +1,7 @@
 // --- IMPORTS ---
 import 'dotenv/config';
-import express, { Request as ExpressRequest, Response as ExpressResponse, NextFunction } from 'express';
+import express from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import path from 'path';
@@ -53,7 +54,7 @@ const loginLimiter = rateLimit({
 const SESSION_TTL = 3600 * 1000; // 1 hour
 setInterval(() => { dbService.deleteExpiredSessions(); }, 10 * 60 * 1000);
 
-const authenticate = async (req: ExpressRequest, res: ExpressResponse, next: NextFunction) => {
+const authenticate = async (req: Request, res: Response, next: NextFunction) => {
     const token = req.headers.authorization?.split(' ')[1];
     if (token) {
         const session = await dbService.getSession(token);
@@ -78,7 +79,7 @@ const authenticate = async (req: ExpressRequest, res: ExpressResponse, next: Nex
 };
 
 // --- API ROUTES ---
-app.post('/api/login', loginLimiter, async (req: ExpressRequest, res: ExpressResponse) => {
+app.post('/api/login', loginLimiter, async (req: Request, res: Response) => {
     const { email, password } = req.body;
     logger.info('Login attempt initiated', { email });
     if (!email || !password || typeof email !== 'string' || typeof password !== 'string') {
@@ -115,7 +116,7 @@ app.post('/api/login', loginLimiter, async (req: ExpressRequest, res: ExpressRes
 
 app.use('/api', authenticate);
 
-app.post('/api/logout', async (req: ExpressRequest, res: ExpressResponse) => {
+app.post('/api/logout', async (req: Request, res: Response) => {
     const token = req.headers.authorization?.split(' ')[1];
     if (token) {
         const session = await dbService.getSession(token);
@@ -129,12 +130,12 @@ app.post('/api/logout', async (req: ExpressRequest, res: ExpressResponse) => {
     res.status(200).json({ message: "Logged out successfully."});
 });
 
-app.get('/api/session', (req: ExpressRequest, res: ExpressResponse) => {
+app.get('/api/session', (req: Request, res: Response) => {
     logger.info('Session check successful', { userId: req.userId });
     res.json({ user: req.user });
 });
 
-app.get('/api/initial-data', async (req: ExpressRequest, res: ExpressResponse) => {
+app.get('/api/initial-data', async (req: Request, res: Response) => {
     try {
         logger.info('Fetching initial data for user', { userId: req.userId });
         const { credentials, userId } = req;
@@ -155,7 +156,7 @@ app.get('/api/initial-data', async (req: ExpressRequest, res: ExpressResponse) =
 });
 
 // Mail Actions
-app.post('/api/conversations/move', async (req: ExpressRequest, res: ExpressResponse) => {
+app.post('/api/conversations/move', async (req: Request, res: Response) => {
     const { conversationIds, targetFolderId } = req.body;
     logger.info('Request to move conversations', { userId: req.userId, count: conversationIds?.length, targetFolderId });
     if (!Array.isArray(conversationIds) || typeof targetFolderId !== 'string') {
@@ -166,7 +167,7 @@ app.post('/api/conversations/move', async (req: ExpressRequest, res: ExpressResp
     res.json({ emails });
 });
 
-app.post('/api/conversations/delete-permanently', async (req: ExpressRequest, res: ExpressResponse) => {
+app.post('/api/conversations/delete-permanently', async (req: Request, res: Response) => {
     const { conversationIds } = req.body;
     logger.info('Request to delete conversations permanently', { userId: req.userId, count: conversationIds?.length });
     if (!Array.isArray(conversationIds)) return res.status(400).json({ message: "Invalid input." });
@@ -175,7 +176,7 @@ app.post('/api/conversations/delete-permanently', async (req: ExpressRequest, re
     res.json({ emails });
 });
 
-app.post('/api/conversations/set-label-state', async (req: ExpressRequest, res: ExpressResponse) => {
+app.post('/api/conversations/set-label-state', async (req: Request, res: Response) => {
     const { messageIds, labelId, state } = req.body;
     logger.info('Request to set label state', { userId: req.userId, labelId, state, messageCount: messageIds?.length });
     if (!Array.isArray(messageIds) || typeof labelId !== 'string' || typeof state !== 'boolean') {
@@ -196,7 +197,7 @@ app.post('/api/conversations/set-label-state', async (req: ExpressRequest, res: 
     res.json({ emails });
 });
 
-app.post('/api/conversations/mark-read', async (req: ExpressRequest, res: ExpressResponse) => {
+app.post('/api/conversations/mark-read', async (req: Request, res: Response) => {
     const { conversationIds, isRead } = req.body;
     logger.info('Request to mark conversations as read/unread', { userId: req.userId, isRead, count: conversationIds?.length });
     if (!Array.isArray(conversationIds) || typeof isRead !== 'boolean') return res.status(400).json({ message: "Invalid input." });
@@ -205,7 +206,7 @@ app.post('/api/conversations/mark-read', async (req: ExpressRequest, res: Expres
     res.json({ emails });
 });
 
-app.post('/api/emails/send', async (req: ExpressRequest, res: ExpressResponse) => {
+app.post('/api/emails/send', async (req: Request, res: Response) => {
     const { data, conversationId, draftId } = req.body;
     logger.info('Request to send email', { userId: req.userId, to: data?.to, subject: data?.subject, scheduled: !!data?.scheduleDate });
     const { credentials, encryptedCredentials, user } = req;
@@ -218,7 +219,7 @@ app.post('/api/emails/send', async (req: ExpressRequest, res: ExpressResponse) =
     res.json({ emails });
 });
 
-app.post('/api/emails/draft', async (req: ExpressRequest, res: ExpressResponse) => {
+app.post('/api/emails/draft', async (req: Request, res: Response) => {
     const { data, user, conversationId, draftId } = req.body;
     logger.info('Request to save draft', { userId: req.userId, subject: data?.subject });
     if (!data || !user) return res.status(400).json({ message: "Invalid draft data." });
@@ -227,7 +228,7 @@ app.post('/api/emails/draft', async (req: ExpressRequest, res: ExpressResponse) 
     res.json({ emails, newDraftId });
 });
 
-app.delete('/api/emails/draft', async (req: ExpressRequest, res: ExpressResponse) => {
+app.delete('/api/emails/draft', async (req: Request, res: Response) => {
     const { draftId } = req.body;
     logger.info('Request to delete draft', { userId: req.userId, draftId });
     if (typeof draftId !== 'string') return res.status(400).json({ message: "Invalid draft ID." });
@@ -236,7 +237,7 @@ app.delete('/api/emails/draft', async (req: ExpressRequest, res: ExpressResponse
     res.json({ emails });
 });
 
-app.post('/api/onboarding', async (req: ExpressRequest, res: ExpressResponse) => {
+app.post('/api/onboarding', async (req: Request, res: Response) => {
     logger.info('Completing onboarding for user', { userId: req.userId });
     if (!req.userId) return res.status(401).json({ message: "Not authenticated" });
     
@@ -256,7 +257,7 @@ app.post('/api/onboarding', async (req: ExpressRequest, res: ExpressResponse) =>
 const __dirname = path.dirname(new URL(import.meta.url).pathname);
 const buildPath = path.resolve(__dirname, '..');
 app.use(express.static(buildPath));
-app.get('*', (req: ExpressRequest, res: ExpressResponse) => res.sendFile(path.join(buildPath, 'index.html')));
+app.get('*', (req: Request, res: Response) => res.sendFile(path.join(buildPath, 'index.html')));
 
 
 // --- SERVER STARTUP ---
