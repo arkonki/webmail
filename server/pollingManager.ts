@@ -1,4 +1,4 @@
-import type { Response } from 'express';
+import { Response } from 'express';
 import { logger } from './logger';
 
 // Map of userId to a set of active long polling response objects

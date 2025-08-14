@@ -31,7 +31,7 @@ declare global {
   }
 }
 
-const app = express();
+const app: express.Express = express();
 
 // --- MIDDLEWARE SETUP ---
 app.use(helmet());

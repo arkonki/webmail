@@ -3,14 +3,17 @@
   "version": "1.0.0",
   "description": "A modern webmail client UI with server",
   "type": "module",
-  "main": "dist/server/index.js",
+  "main": "index.cjs",
   "scripts": {
     "dev": "vite",
     "serve": "vite-node server/index.ts",
     "build:client": "vite build",
     "build:server": "tsc -p tsconfig.server.json",
     "build": "npm run build:client && npm run build:server",
-    "start": "node dist/server/index.js"
+    "start": "node index.cjs"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   },
   "keywords": [
     "react",
