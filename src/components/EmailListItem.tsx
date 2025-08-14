@@ -13,7 +13,7 @@ interface ConversationListItemProps {
 }
 
 const ConversationListItem: React.FC<ConversationListItemProps> = ({ conversation }) => {
-  const { setSelectedConversationId, toggleLabel, markAsRead, deleteConversation, selectedConversationIds, toggleConversationSelection, openCompose, focusedConversationId, labels } = useAppContext();
+  const { setSelectedConversationId, setLabelState, markAsRead, deleteConversation, selectedConversationIds, toggleConversationSelection, openCompose, focusedConversationId, labels } = useAppContext();
   const isFocused = focusedConversationId === conversation.id;
   const isChecked = selectedConversationIds.has(conversation.id);
   const dragPreviewRef = useRef<HTMLDivElement | null>(null);
@@ -40,7 +40,7 @@ const ConversationListItem: React.FC<ConversationListItemProps> = ({ conversatio
 
   const handleStarClick = (e: React.MouseEvent) => {
     e.stopPropagation(); 
-    toggleLabel([conversation.id], SystemLabel.STARRED);
+    setLabelState([conversation.id], SystemLabel.STARRED, !isStarred);
   };
 
   const handleDeleteClick = (e: React.MouseEvent) => {
@@ -132,9 +132,14 @@ const ConversationListItem: React.FC<ConversationListItemProps> = ({ conversatio
                     </span>
                   )}
               </div>
-              <div className="truncate text-sm">
-                  <span className={` ${!conversation.isRead && !isDraftOrScheduled ? 'text-gray-900 dark:text-gray-100 font-bold' : 'text-gray-800 dark:text-gray-300'}`}>{conversation.subject}</span>
-                  <span className="ml-2 text-gray-500 dark:text-gray-400 font-normal">- {latestEmail.snippet}</span>
+              <div className="flex-grow truncate text-sm flex items-baseline">
+                  <span className={`truncate ${!conversation.isRead && !isDraftOrScheduled ? 'text-gray-900 dark:text-gray-100 font-bold' : 'text-gray-800 dark:text-gray-300'}`}>{conversation.subject}</span>
+                   {conversation.unsubscribeUrl && (
+                        <a href={conversation.unsubscribeUrl} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="ml-2 text-primary hover:underline text-xs font-medium opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                            Unsubscribe
+                        </a>
+                    )}
+                  <span className="ml-2 text-gray-500 dark:text-gray-400 font-normal hidden md:inline truncate">- {latestEmail.snippet}</span>
               </div>
               <div className="flex items-center gap-1 flex-shrink-0 ml-auto">
                     {userLabels.map(label => (

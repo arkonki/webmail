@@ -1,2 +1,1 @@
-// This file is intentionally left empty.
-export {};
+// This file is unused and has been removed.

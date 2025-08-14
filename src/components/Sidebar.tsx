@@ -17,9 +17,11 @@ import { FolderIcon } from './icons/FolderIcon';
 import { FolderPlusIcon } from './icons/FolderPlusIcon';
 import { ArchiveBoxIcon } from './icons/ArchiveBoxIcon';
 import FolderModal from './FolderModal';
+import { ChevronRightIcon } from './icons/ChevronRightIcon';
+import { ChevronDownIcon } from './icons/ChevronDownIcon';
 
 
-const getSystemFolderIcon = (folderName: string): React.ReactNode => {
+const getSystemFolderIcon = (folderName: SystemFolder): React.ReactNode => {
     switch (folderName) {
         case SystemFolder.INBOX: return <InboxIcon className="w-5 h-5" />;
         case SystemFolder.SENT: return <PaperAirplaneIcon className="w-5 h-5" />;
@@ -101,16 +103,26 @@ const NavItem: React.FC<NavItemProps> = ({ name, icon, isActive, onClick, isSide
   );
 };
 
+const SYSTEM_FOLDER_ORDER: SystemFolder[] = [
+    SystemFolder.INBOX,
+    SystemFolder.SENT,
+    SystemFolder.DRAFTS,
+    SystemFolder.SPAM,
+    SystemFolder.TRASH,
+    SystemFolder.SCHEDULED,
+    SystemFolder.ARCHIVE,
+];
 
 const Sidebar: React.FC = () => {
   const { 
-    currentSelection, setCurrentSelection, openCompose, labels, userFolders, isSidebarCollapsed, 
-    toggleLabel, moveConversations, deleteFolder, view, unreadCounts
+    currentSelection, setCurrentSelection, openCompose, labels, userFolders, folderTree, systemFoldersMap, isSidebarCollapsed, 
+    setLabelState, moveConversations, deleteFolder, view, unreadCounts
   } = useAppContext();
   const [isLabelModalOpen, setIsLabelModalOpen] = useState(false);
   const [editingLabel, setEditingLabel] = useState<Label | null>(null);
   const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
   const [editingFolder, setEditingFolder] = useState<UserFolder | null>(null);
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
 
   const handleDropOnFolder = (e: React.DragEvent, folderId: string) => {
     e.preventDefault();
@@ -129,7 +141,7 @@ const Sidebar: React.FC = () => {
     try {
       const data = JSON.parse(e.dataTransfer.getData('application/json'));
       if (data.conversationIds) {
-        toggleLabel(data.conversationIds, labelId);
+        setLabelState(data.conversationIds, labelId, true);
       }
     } catch(err) {
       console.error("Failed to handle drop:", err);
@@ -152,7 +164,55 @@ const Sidebar: React.FC = () => {
     }
   }
 
-  const systemFolders = Object.values(SystemFolder);
+  const userCreatedFoldersTree = folderTree.filter(f => f.source === 'user' || (!f.specialUse && f.source === 'imap'));
+
+  const toggleExpand = (e: React.MouseEvent, folderId: string) => {
+    e.stopPropagation();
+    setExpandedFolders(prev => {
+        const newSet = new Set(prev);
+        if (newSet.has(folderId)) newSet.delete(folderId);
+        else newSet.add(folderId);
+        return newSet;
+    });
+  };
+
+  const renderFolderTree = (folders: UserFolder[], level = 0): React.ReactNode => {
+      return (
+          <ul>
+              {folders.filter(f => f.isSubscribed).map(folder => (
+                  <React.Fragment key={folder.id}>
+                      <NavItem
+                          name={folder.name}
+                          icon={
+                              <div className="flex items-center" style={{ paddingLeft: `${level * 20}px` }}>
+                                  {folder.children && folder.children.length > 0 ? (
+                                      <button onClick={(e) => toggleExpand(e, folder.id)} className="p-0.5 rounded-full -ml-1 mr-1 hover:bg-black/10 dark:hover:bg-white/10">
+                                          {expandedFolders.has(folder.id) ? <ChevronDownIcon className="w-4 h-4" /> : <ChevronRightIcon className="w-4 h-4" />}
+                                      </button>
+                                  ) : (
+                                      <div className="w-5 h-5 mr-1.5" /> // Placeholder for alignment
+                                  )}
+                                  <FolderIcon className="w-5 h-5" />
+                              </div>
+                          }
+                          isActive={currentSelection.type === 'folder' && currentSelection.id === folder.id && view === 'mail'}
+                          onClick={() => setCurrentSelection('folder', folder.id)}
+                          isSidebarCollapsed={isSidebarCollapsed}
+                          onDrop={(e) => handleDropOnFolder(e, folder.id)}
+                          onEdit={() => handleOpenFolderModal(folder)}
+                          onDelete={() => handleDeleteFolder(folder)}
+                          isEditable={folder.source === 'user'}
+                          count={unreadCounts[folder.id]}
+                      />
+                      {expandedFolders.has(folder.id) && folder.children && (
+                          <>{renderFolderTree(folder.children, level + 1)}</>
+                      )}
+                  </React.Fragment>
+              ))}
+          </ul>
+      );
+  };
+
 
   return (
     <aside className={`fixed top-0 pt-16 h-full flex-shrink-0 p-2 bg-surface-container dark:bg-dark-surface-container flex flex-col transition-all duration-300 ease-in-out ${isSidebarCollapsed ? 'w-20' : 'w-64'}`}>
@@ -169,18 +229,22 @@ const Sidebar: React.FC = () => {
       <div className="flex-grow overflow-y-auto mt-2 pr-1">
         <nav>
           <ul>
-            {systemFolders.map((folder) => (
-              <NavItem
-                key={folder}
-                name={folder}
-                icon={getSystemFolderIcon(folder)}
-                isActive={currentSelection.type === 'folder' && currentSelection.id === folder && view === 'mail'}
-                onClick={() => setCurrentSelection('folder', folder)}
-                isSidebarCollapsed={isSidebarCollapsed}
-                onDrop={(e) => handleDropOnFolder(e, folder)}
-                count={unreadCounts[folder]}
-              />
-            ))}
+            {SYSTEM_FOLDER_ORDER.map(folderKey => {
+                const folder = systemFoldersMap.get(folderKey);
+                if (!folder) return null;
+                return (
+                     <NavItem
+                        key={folder.id}
+                        name={folder.name}
+                        icon={getSystemFolderIcon(folderKey)}
+                        isActive={currentSelection.type === 'folder' && currentSelection.id === folder.id && view === 'mail'}
+                        onClick={() => setCurrentSelection('folder', folder.id)}
+                        isSidebarCollapsed={isSidebarCollapsed}
+                        onDrop={(e) => handleDropOnFolder(e, folder.id)}
+                        count={unreadCounts[folder.id]}
+                      />
+                )
+            })}
              <NavItem
                 key={SystemLabel.STARRED}
                 name={SystemLabel.STARRED}
@@ -200,23 +264,27 @@ const Sidebar: React.FC = () => {
                      </button>
                  )}
               </div>
-              <ul>
-                {userFolders.filter(folder => folder.isSubscribed).map(folder => (
-                   <NavItem
-                    key={folder.id}
-                    name={folder.name}
-                    icon={<FolderIcon className="w-5 h-5" />}
-                    isActive={currentSelection.type === 'folder' && currentSelection.id === folder.id && view === 'mail'}
-                    onClick={() => setCurrentSelection('folder', folder.id)}
-                    isSidebarCollapsed={isSidebarCollapsed}
-                    onDrop={(e) => handleDropOnFolder(e, folder.id)}
-                    onEdit={() => handleOpenFolderModal(folder)}
-                    onDelete={() => handleDeleteFolder(folder)}
-                    isEditable={folder.source === 'user'}
-                    count={unreadCounts[folder.id]}
-                  />
-                ))}
-              </ul>
+              {isSidebarCollapsed ? (
+                <ul>
+                    {userFolders.filter(f => f.source === 'user' && f.isSubscribed).map(folder => (
+                         <NavItem
+                            key={folder.id}
+                            name={folder.name}
+                            icon={<FolderIcon className="w-5 h-5" />}
+                            isActive={currentSelection.type === 'folder' && currentSelection.id === folder.id && view === 'mail'}
+                            onClick={() => setCurrentSelection('folder', folder.id)}
+                            isSidebarCollapsed={isSidebarCollapsed}
+                            onDrop={(e) => handleDropOnFolder(e, folder.id)}
+                            onEdit={() => handleOpenFolderModal(folder)}
+                            onDelete={() => handleDeleteFolder(folder)}
+                            isEditable={folder.source === 'user'}
+                            count={unreadCounts[folder.id]}
+                          />
+                    ))}
+                </ul>
+                ) : (
+                    renderFolderTree(userCreatedFoldersTree)
+                )}
           </div>
           <div className="mt-4 pt-4 border-t border-outline dark:border-dark-outline">
               <div className={`flex items-center justify-between px-4 mb-1 ${isSidebarCollapsed ? 'justify-center' : ''}`}>

@@ -1,4 +1,5 @@
 
+
 export enum SystemFolder {
   INBOX = 'Inbox',
   SENT = 'Sent',
@@ -28,6 +29,8 @@ export enum ActionType {
 export interface Attachment {
   fileName: string;
   fileSize: number; // in bytes
+  contentType: string;
+  content?: string; // base64 encoded for sending
 }
 
 export interface Label {
@@ -39,13 +42,19 @@ export interface Label {
 export interface UserFolder {
   id: string;
   name: string;
+  userId: string;
   isSubscribed: boolean;
   source: 'user' | 'imap';
+  path: string; // Full path from IMAP
+  parentId: string | null;
+  children?: UserFolder[];
+  specialUse?: string | null; // e.g. '\Sent', '\Trash'
 }
 
 
 export interface Email {
-  id: string;
+  id: string; // Message-ID
+  uid: number; // UID on the IMAP server for the current folder
   conversationId: string;
   senderName: string;
   senderEmail: string;
@@ -62,6 +71,8 @@ export interface Email {
   attachments?: Attachment[];
   scheduledSendTime?: string;
   snoozedUntil?: string;
+  references?: string[];
+  unsubscribeUrl?: string;
 }
 
 export interface Conversation {
@@ -75,9 +86,12 @@ export interface Conversation {
     labelIds: string[];
     isSnoozed: boolean;
     hasAttachments: boolean;
+    hasUnsubscribeLink?: boolean;
+    unsubscribeUrl?: string;
 }
 
 export interface User {
+    id?: string;
     email: string;
     name: string; // This will become the display name
     profilePicture?: string; // base64 encoded image
@@ -146,4 +160,14 @@ export interface AppSettings {
   lastName?: string;
   companyName?: string;
   jobTitle?: string;
+}
+
+export interface SendEmailData {
+  to: string; 
+  cc?: string; 
+  bcc?: string; 
+  subject: string; 
+  body: string; 
+  attachments: Attachment[]; 
+  scheduleDate?: Date | string;
 }

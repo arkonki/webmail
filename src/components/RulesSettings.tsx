@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { useAppContext } from '../context/AppContext';
 import { TrashIcon } from './icons/TrashIcon';
@@ -15,12 +16,12 @@ const Pill: React.FC<{ children: React.ReactNode; className?: string }> = ({ chi
 );
 
 const RulesSettings: React.FC = () => {
-    const { appSettings, labels, userFolders, addRule, deleteRule } = useAppContext();
+    const { appSettings, labels, userFolders, addRule, deleteRule, systemFoldersMap } = useAppContext();
     const [conditionField, setConditionField] = useState<ConditionField>('sender');
     const [conditionValue, setConditionValue] = useState('');
     const [actionType, setActionType] = useState<ActionType>('applyLabel');
     const [actionLabelId, setActionLabelId] = useState(labels[0]?.id || '');
-    const [actionFolderId, setActionFolderId] = useState<string>(SystemFolder.INBOX);
+    const [actionFolderId, setActionFolderId] = useState<string>(systemFoldersMap.get(SystemFolder.INBOX)?.id || '');
 
     const handleAddRule = (e: React.FormEvent) => {
         e.preventDefault();
@@ -137,9 +138,9 @@ const RulesSettings: React.FC = () => {
                                 onChange={e => setActionFolderId(e.target.value)}
                                 className="p-2 border rounded-md bg-white dark:bg-dark-surface text-on-surface dark:text-dark-on-surface dark:border-dark-outline"
                             >
-                                {Object.values(SystemFolder).map(f => <option key={f} value={f}>{f}</option>)}
+                                {Array.from(systemFoldersMap.values()).map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
                                 <option disabled>-- User Folders --</option>
-                                {userFolders.map(folder => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
+                                {userFolders.filter(f => !f.specialUse).map(folder => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
                             </select>
                         )}
                     </div>

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useAppContext } from '../context/AppContext';
 import { XMarkIcon } from './icons/XMarkIcon';
 import { TrashIcon } from './icons/TrashIcon';
-import { ActionType, SystemFolder, Contact, ContactGroup } from '../types';
+import { ActionType, SystemFolder, Contact, ContactGroup, SendEmailData, Attachment } from '../types';
 import { PaperClipIcon } from './icons/PaperClipIcon';
 import RichTextToolbar from './RichTextToolbar';
 import { ChevronDownIcon } from './icons/ChevronDownIcon';
@@ -10,14 +10,25 @@ import ScheduleSendPopover from './ScheduleSendPopover';
 import { UsersIcon } from './icons/UsersIcon';
 import Avatar from './Avatar';
 import { MinusIcon } from './icons/MinusIcon';
+import AttachmentTile from './AttachmentTile';
 
-const formatFileSize = (bytes: number): string => {
-  if (bytes === 0) return '0 Bytes';
-  const k = 1024;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+const fileToAttachment = (file: File): Promise<Attachment> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64Content = (reader.result as string).split(',')[1];
+      resolve({
+        fileName: file.name,
+        fileSize: file.size,
+        contentType: file.type,
+        content: base64Content,
+      });
+    };
+    reader.onerror = error => reject(error);
+    reader.readAsDataURL(file);
+  });
 };
+
 
 type AutocompleteSuggestion = (Contact & { type: 'contact' }) | (ContactGroup & { type: 'group' });
 
@@ -29,6 +40,7 @@ const ComposeModal: React.FC = () => {
     const imageInputRef = useRef<HTMLInputElement>(null);
     const modalRef = useRef<HTMLDivElement>(null);
     const dragCounter = useRef(0);
+    const wasOpenRef = useRef(false);
 
     const [to, setTo] = useState('');
     const [cc, setCc] = useState('');
@@ -36,6 +48,8 @@ const ComposeModal: React.FC = () => {
     const [subject, setSubject] = useState('');
     const [body, setBody] = useState('');
     const [attachments, setAttachments] = useState<File[]>([]);
+    const [restoredAttachments, setRestoredAttachments] = useState<Attachment[]>([]);
+    const [attachmentPreviewUrls, setAttachmentPreviewUrls] = useState<Map<string, string>>(new Map());
     const [currentDraftId, setCurrentDraftId] = useState<string | undefined>(composeState.draftId);
     
     const [showCc, setShowCc] = useState(false);
@@ -46,7 +60,9 @@ const ComposeModal: React.FC = () => {
     const [isSchedulePopoverOpen, setIsSchedulePopoverOpen] = useState(false);
 
     useEffect(() => {
-        if (composeState.isOpen && user) {
+        // This effect runs only when the modal is newly opened, preventing state wipes on re-render.
+        if (composeState.isOpen && !wasOpenRef.current && user) {
+            wasOpenRef.current = true;
             const { action, email, recipient, bodyPrefix, initialData, draftId } = composeState;
             setCurrentDraftId(draftId);
             
@@ -56,10 +72,11 @@ const ComposeModal: React.FC = () => {
                 setBcc(initialData.bcc || '');
                 setSubject(initialData.subject);
                 setBody(initialData.body);
-                setAttachments(initialData.attachments);
+                setAttachments([]);
+                setRestoredAttachments(initialData.attachments);
                 if (contentRef.current) contentRef.current.innerHTML = initialData.body;
-                if (initialData.cc) setShowCc(true);
-                if (initialData.bcc) setShowBcc(true);
+                setShowCc(!!initialData.cc);
+                setShowBcc(!!initialData.bcc);
             } else {
                 let finalBody = '';
                 setTo(recipient || '');
@@ -67,6 +84,7 @@ const ComposeModal: React.FC = () => {
                 setBcc('');
                 setSubject('');
                 setAttachments([]);
+                setRestoredAttachments([]);
                 setShowCc(false);
                 setShowBcc(false);
 
@@ -76,8 +94,8 @@ const ComposeModal: React.FC = () => {
                     setBcc(email.bcc || '');
                     setSubject(email.subject);
                     finalBody = email.body;
-                    if (email.cc) setShowCc(true);
-                    if (email.bcc) setShowBcc(true);
+                    setShowCc(!!email.cc);
+                    setShowBcc(!!email.bcc);
                 } else if (action === ActionType.REPLY && email) {
                     setTo(email.senderEmail);
                     setSubject(email.subject.startsWith('Re:') ? email.subject : `Re: ${email.subject}`);
@@ -99,28 +117,40 @@ const ComposeModal: React.FC = () => {
                     contentRef.current.innerHTML = finalBody;
                 }
             }
+        } else if (!composeState.isOpen) {
+             wasOpenRef.current = false;
         }
-    }, [composeState.isOpen, composeState.action, composeState.email, user, appSettings.signature, composeState.recipient, composeState.bodyPrefix, composeState.initialData, composeState.draftId]);
+    }, [composeState, user, appSettings.signature]);
 
+    const prepareAndSaveDraft = async () => {
+        const newAttachmentData = await Promise.all(attachments.map(fileToAttachment));
+        const allAttachments = [...restoredAttachments, ...newAttachmentData];
+        const draftData = { to, cc, bcc, subject, body, attachments: allAttachments };
+        const newDraftId = await saveDraft(draftData, currentDraftId, composeState.conversationId);
+        return newDraftId;
+    };
     
     // Auto-save logic
     useEffect(() => {
-        let timer: ReturnType<typeof setTimeout>;
-        if (composeState.isOpen) {
-            timer = setTimeout(() => {
-                if (to || subject || (contentRef.current && contentRef.current.innerText.trim() !== '')) {
-                   const newDraftId = saveDraft({ to, cc, bcc, subject, body, attachments }, currentDraftId);
-                   setCurrentDraftId(newDraftId);
-                }
-            }, 5000);
-        }
-        return () => clearTimeout(timer);
-    }, [to, cc, bcc, subject, body, attachments, composeState.isOpen, saveDraft, currentDraftId]);
+        if (!composeState.isOpen) return;
+        let isMounted = true;
+        const timer = setTimeout(() => {
+            if (isMounted && (to || cc || bcc || subject || (contentRef.current && contentRef.current.innerText.trim() !== '') || attachments.length > 0 || restoredAttachments.length > 0)) {
+               prepareAndSaveDraft().then(newDraftId => {
+                   if (isMounted) setCurrentDraftId(newDraftId);
+               });
+            }
+        }, 5000);
+
+        return () => {
+            isMounted = false;
+            clearTimeout(timer);
+        };
+    }, [to, cc, bcc, subject, body, attachments, restoredAttachments, composeState.isOpen, saveDraft, currentDraftId, composeState.conversationId]);
 
     const handleClose = () => {
-        if (to || subject || (contentRef.current && contentRef.current.innerText.trim() !== '')) {
-           const newDraftId = saveDraft({ to, cc, bcc, subject, body, attachments }, currentDraftId);
-           setCurrentDraftId(newDraftId);
+        if (to || subject || (contentRef.current && contentRef.current.innerText.trim() !== '') || attachments.length > 0 || restoredAttachments.length > 0) {
+           prepareAndSaveDraft();
         } else if (currentDraftId) {
             deleteDraft(currentDraftId);
         }
@@ -134,24 +164,35 @@ const ComposeModal: React.FC = () => {
         closeCompose();
     };
 
-    const handleSend = (scheduleDate?: Date) => {
+    const handleSend = async (scheduleDate?: Date) => {
         if (!to) {
             alert('Please enter at least one recipient.');
             return;
         }
-        sendEmail({ to, cc, bcc, subject, body, attachments, scheduleDate }, currentDraftId);
+        const newAttachmentData = await Promise.all(attachments.map(fileToAttachment));
+        const allAttachments = [...restoredAttachments, ...newAttachmentData];
+        const sendData: SendEmailData = { to, cc, bcc, subject, body, attachments: allAttachments, scheduleDate };
+        sendEmail(sendData, currentDraftId, composeState.conversationId);
         setIsSchedulePopoverOpen(false);
     };
 
     const handleBodyChange = (e: React.FormEvent<HTMLDivElement>) => {
         setBody(e.currentTarget.innerHTML);
     };
+
+    const addFiles = (files: File[]) => {
+        setAttachments(prev => [...prev, ...files]);
+        files.forEach(file => {
+            if (file.type.startsWith('image/')) {
+                const url = URL.createObjectURL(file);
+                setAttachmentPreviewUrls(prev => new Map(prev).set(file.name, url));
+            }
+        });
+    };
     
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (e.target.files) {
-            setAttachments(prev => [...prev, ...Array.from(e.target.files!)]);
-        }
-        e.target.value = ''; // Reset file input
+        if (e.target.files) addFiles(Array.from(e.target.files));
+        e.target.value = '';
     };
 
     const insertImageFile = (file: File) => {
@@ -176,38 +217,22 @@ const ComposeModal: React.FC = () => {
     };
     
     const removeAttachment = (index: number) => {
+        const fileToRemove = attachments[index];
+        if (attachmentPreviewUrls.has(fileToRemove.name)) {
+            URL.revokeObjectURL(attachmentPreviewUrls.get(fileToRemove.name)!);
+            setAttachmentPreviewUrls(prev => {
+                const newMap = new Map(prev);
+                newMap.delete(fileToRemove.name);
+                return newMap;
+            });
+        }
         setAttachments(prev => prev.filter((_, i) => i !== index));
     };
 
-    const handleDragEvents = (e: React.DragEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-    };
-    
-    const handleDragEnter = (e: React.DragEvent) => {
-        handleDragEvents(e);
-        dragCounter.current++;
-        if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
-            setIsDraggingOver(true);
-        }
-    };
-    
-    const handleDragLeave = (e: React.DragEvent) => {
-        handleDragEvents(e);
-        dragCounter.current--;
-        if (dragCounter.current === 0) {
-            setIsDraggingOver(false);
-        }
-    };
-    
-    const handleDrop = (e: React.DragEvent) => {
-        handleDragEvents(e);
-        setIsDraggingOver(false);
-        dragCounter.current = 0;
-        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-            setAttachments(prev => [...prev, ...Array.from(e.dataTransfer.files)]);
-        }
-    };
+    const handleDragEvents = (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); };
+    const handleDragEnter = (e: React.DragEvent) => { handleDragEvents(e); dragCounter.current++; if (e.dataTransfer.items && e.dataTransfer.items.length > 0) setIsDraggingOver(true); };
+    const handleDragLeave = (e: React.DragEvent) => { handleDragEvents(e); dragCounter.current--; if (dragCounter.current === 0) setIsDraggingOver(false); };
+    const handleDrop = (e: React.DragEvent) => { handleDragEvents(e); setIsDraggingOver(false); dragCounter.current = 0; if (e.dataTransfer.files && e.dataTransfer.files.length > 0) addFiles(Array.from(e.dataTransfer.files)); };
 
     // --- Autocomplete Logic ---
     const updateAutocomplete = (query: string, field: 'to' | 'cc' | 'bcc') => {
@@ -218,13 +243,8 @@ const ComposeModal: React.FC = () => {
         }
         const lowerCaseQuery = query.toLowerCase();
         
-        const contactSuggestions = contacts.filter(c =>
-            c.name.toLowerCase().includes(lowerCaseQuery) || c.email.toLowerCase().includes(lowerCaseQuery)
-        ).map(c => ({ ...c, type: 'contact' as const }));
-
-        const groupSuggestions = contactGroups.filter(g =>
-            g.name.toLowerCase().includes(lowerCaseQuery)
-        ).map(g => ({ ...g, type: 'group' as const }));
+        const contactSuggestions = contacts.filter(c => c.name.toLowerCase().includes(lowerCaseQuery) || c.email.toLowerCase().includes(lowerCaseQuery)).map(c => ({ ...c, type: 'contact' as const }));
+        const groupSuggestions = contactGroups.filter(g => g.name.toLowerCase().includes(lowerCaseQuery)).map(g => ({ ...g, type: 'group' as const }));
         
         setAutocompleteSuggestions([...contactSuggestions, ...groupSuggestions].slice(0, 5));
     };
@@ -353,16 +373,23 @@ const ComposeModal: React.FC = () => {
                         suppressContentEditableWarning={true}
                     />
                 </div>
-                 {attachments.length > 0 && (
-                    <div className="px-4 pt-2 flex flex-wrap gap-2 border-t border-outline dark:border-dark-outline">
+                {(restoredAttachments.length > 0 || attachments.length > 0) && (
+                    <div className="px-4 py-3 flex flex-wrap gap-3 border-t border-outline dark:border-dark-outline">
+                        {restoredAttachments.map((att, index) => (
+                             <AttachmentTile
+                                key={`restored-${index}`}
+                                attachment={att}
+                                previewUrl={att.contentType.startsWith('image/') ? `data:${att.contentType};base64,${att.content}` : undefined}
+                                onRemove={() => setRestoredAttachments(prev => prev.filter((_, i) => i !== index))}
+                            />
+                        ))}
                         {attachments.map((file, index) => (
-                            <div key={index} className="flex items-center bg-gray-100 dark:bg-gray-700 rounded-full pl-3 pr-1 py-1 text-sm">
-                                <PaperClipIcon className="w-4 h-4 mr-2" />
-                                <span className="truncate max-w-xs">{file.name} ({formatFileSize(file.size)})</span>
-                                <button onClick={() => removeAttachment(index)} className="ml-2 p-1 rounded-full hover:bg-gray-300 dark:hover:bg-gray-600">
-                                    <XMarkIcon className="w-3 h-3"/>
-                                </button>
-                            </div>
+                            <AttachmentTile
+                                key={index}
+                                attachment={{fileName: file.name, fileSize: file.size, contentType: file.type}}
+                                previewUrl={attachmentPreviewUrls.get(file.name)}
+                                onRemove={() => removeAttachment(index)}
+                            />
                         ))}
                     </div>
                 )}

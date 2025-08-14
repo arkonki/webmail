@@ -1,5 +1,6 @@
 
 
+
 import React, { useState } from 'react';
 import SignatureSettings from './SignatureSettings';
 import AutoResponderSettings from './AutoResponderSettings';
@@ -8,11 +9,13 @@ import GeneralSettings from './GeneralSettings';
 import LabelSettings from './LabelSettings';
 import FolderSettings from './FolderSettings';
 import ProfileSettings from './ProfileSettings';
+import { useTranslation } from 'react-i18next';
 
 type SettingsTab = 'general' | 'profile' | 'labels' | 'folders' | 'signature' | 'autoResponder' | 'rules';
 
 const Settings: React.FC = () => {
     const [activeTab, setActiveTab] = useState<SettingsTab>('general');
+    const { t } = useTranslation();
 
     const renderTabContent = () => {
         switch (activeTab) {
@@ -43,18 +46,18 @@ const Settings: React.FC = () => {
     return (
         <div className="flex-grow flex flex-col bg-gray-50 dark:bg-dark-surface overflow-y-auto p-8">
             <div className="flex items-center justify-between mb-8">
-                <h1 className="text-2xl font-bold text-on-surface dark:text-dark-on-surface">Settings</h1>
+                <h1 className="text-2xl font-bold text-on-surface dark:text-dark-on-surface">{t('settings.title')}</h1>
             </div>
 
             <div className="flex flex-row gap-8">
                 <div className="flex flex-col gap-2 p-2 bg-white dark:bg-dark-surface-container rounded-lg border border-outline dark:border-dark-outline self-start w-48 flex-shrink-0">
-                    <TabButton tab="general" label="General" />
-                    <TabButton tab="profile" label="Profile" />
-                    <TabButton tab="labels" label="Labels" />
-                    <TabButton tab="folders" label="Folders" />
-                    <TabButton tab="signature" label="Signature" />
-                    <TabButton tab="autoResponder" label="Auto Responder" />
-                    <TabButton tab="rules" label="Rules" />
+                    <TabButton tab="general" label={t('settings.general')} />
+                    <TabButton tab="profile" label={t('settings.profile')} />
+                    <TabButton tab="labels" label={t('settings.labels')} />
+                    <TabButton tab="folders" label={t('settings.folders')} />
+                    <TabButton tab="signature" label={t('settings.signature')} />
+                    <TabButton tab="autoResponder" label={t('settings.autoResponder')} />
+                    <TabButton tab="rules" label={t('settings.rules')} />
                 </div>
                 <div className="flex-grow bg-white dark:bg-dark-surface-container p-6 rounded-lg border border-outline dark:border-dark-outline min-h-[500px]">
                     {renderTabContent()}

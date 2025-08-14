@@ -1,9 +1,9 @@
-
 import React, { createContext, useState, useContext, ReactNode, useMemo, useCallback, useEffect, useRef } from 'react';
-import { Email, ActionType, Label, Conversation, User, AppSettings, Signature, AutoResponder, Rule, SystemLabel, Contact, ContactGroup, SystemFolder, UserFolder } from '../types';
+import { Email, ActionType, Label, Conversation, User, AppSettings, Signature, AutoResponder, Rule, SystemLabel, Contact, ContactGroup, SystemFolder, UserFolder, SendEmailData, Attachment } from '../types';
 import { useToast } from './ToastContext';
 import * as api from '../services/apiService';
 import { useTranslation } from 'react-i18next';
+import { logService } from '../services/logService';
 
 
 interface ComposeState {
@@ -21,7 +21,7 @@ interface ComposeState {
       bcc?: string;
       subject: string;
       body: string;
-      attachments: File[];
+      attachments: Attachment[];
   }
 }
 
@@ -31,6 +31,16 @@ type SelectionType = 'folder' | 'label';
 
 const ITEMS_PER_PAGE = 50;
 
+const SPECIAL_USE_MAP: { [key in SystemFolder]: string } = {
+    [SystemFolder.INBOX]: '\\Inbox',
+    [SystemFolder.SENT]: '\\Sent',
+    [SystemFolder.DRAFTS]: '\\Drafts',
+    [SystemFolder.TRASH]: '\\Trash',
+    [SystemFolder.SPAM]: '\\Junk',
+    [SystemFolder.ARCHIVE]: '\\Archive',
+    [SystemFolder.SCHEDULED]: 'Scheduled', // Not a standard flag
+};
+
 interface AppContextType {
   // State
   user: User | null;
@@ -38,6 +48,8 @@ interface AppContextType {
   conversations: Conversation[];
   labels: Label[];
   userFolders: UserFolder[];
+  folderTree: UserFolder[];
+  systemFoldersMap: Map<SystemFolder, UserFolder>;
   currentSelection: { type: SelectionType, id: string };
   selectedConversationId: string | null;
   focusedConversationId: string | null;
@@ -74,14 +86,14 @@ interface AppContextType {
   openCompose: (config?: Partial<Omit<ComposeState, 'isOpen'>>) => void;
   closeCompose: () => void;
   toggleMinimizeCompose: () => void;
-  sendEmail: (data: SendEmailData, draftId?: string) => void;
-  saveDraft: (data: SendEmailData, draftId?: string) => string;
+  sendEmail: (data: SendEmailData, draftId?: string, conversationId?: string) => void;
+  saveDraft: (data: Partial<SendEmailData>, draftId?: string, conversationId?: string) => Promise<string>;
   deleteDraft: (draftId: string) => void;
   cancelSend: () => void;
   
   // Mail Actions
   moveConversations: (conversationIds: string[], targetFolderId: string) => void;
-  toggleLabel: (conversationIds: string[], labelId: string) => void;
+  setLabelState: (conversationIds: string[], labelId: string, state: boolean) => void;
   deleteConversation: (conversationIds: string[]) => void;
   archiveConversation: (conversationIds: string[]) => void;
   markAsRead: (conversationId: string) => void;
@@ -120,7 +132,7 @@ interface AppContextType {
   deleteLabel: (id: string) => void;
 
   // Folder Management
-  createFolder: (name: string) => void;
+  createFolder: (name: string, parentId: string | null) => void;
   updateFolder: (id: string, newName: string) => void;
   deleteFolder: (id: string) => void;
   syncFolders: () => void;
@@ -140,16 +152,6 @@ interface AppContextType {
   addContactToGroup: (groupId: string, contactId: string) => void;
   removeContactFromGroup: (groupId: string, contactId: string) => void;
   setSelectedGroupId: (id: string | null) => void;
-}
-
-interface SendEmailData {
-  to: string; 
-  cc?: string; 
-  bcc?: string; 
-  subject: string; 
-  body: string; 
-  attachments: File[]; 
-  scheduleDate?: Date;
 }
 
 interface PendingSend {
@@ -181,7 +183,7 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [contactGroups, setContactGroups] = useState<ContactGroup[]>([]);
   const [appSettings, setAppSettings] = useState<AppSettings>(initialAppSettings);
-  const [currentSelection, setCurrentSelection] = useState<{type: SelectionType, id: string}>({type: 'folder', id: SystemFolder.INBOX});
+  const [currentSelection, setCurrentSelection] = useState<{type: SelectionType, id: string}>({type: 'folder', id: 'Inbox'});
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
@@ -211,52 +213,106 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
     setCurrentPage(1);
   }, [currentSelection, searchQuery]);
 
+  const folderTree = useMemo(() => {
+    const foldersById = new Map(userFolders.map(f => [f.id, {...f, children: [] as UserFolder[]}]));
+    const tree: UserFolder[] = [];
+    userFolders.forEach(f => {
+        const folderNode = foldersById.get(f.id)!;
+        if (f.parentId && foldersById.has(f.parentId)) {
+            foldersById.get(f.parentId)!.children.push(folderNode);
+        } else {
+            tree.push(folderNode);
+        }
+    });
+    return tree;
+  }, [userFolders]);
+
+  const systemFoldersMap = useMemo(() => {
+    const map = new Map<SystemFolder, UserFolder>();
+    if (userFolders.length > 0) {
+        userFolders.forEach(folder => {
+            if (folder.specialUse) {
+                const key = Object.entries(SPECIAL_USE_MAP).find(([, val]) => val === folder.specialUse)?.[0] as SystemFolder;
+                if (key) {
+                    map.set(key, folder);
+                }
+            }
+        });
+    }
+    return map;
+  }, [userFolders]);
+
   // WebSocket connection management
   useEffect(() => {
-    if (user && !wsRef.current) {
-        const token = localStorage.getItem('sessionToken');
-        if (!token) return;
-
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}/ws?token=${token}`;
-        
-        const ws = new WebSocket(wsUrl);
-        wsRef.current = ws;
-
-        ws.onopen = () => console.log('WebSocket connected');
-        
-        ws.onmessage = (event) => {
-            const message = JSON.parse(event.data);
-            if (message.type === 'NEW_EMAIL') {
-                const newEmail: Email = message.payload;
-                setEmails(prev => [newEmail, ...prev]);
-                addToast('toasts.newMail', { tOptions: { sender: newEmail.senderName, subject: newEmail.subject } });
-            }
-        };
-
-        ws.onclose = () => {
-            console.log('WebSocket disconnected');
-            wsRef.current = null;
-            // Optional: Implement reconnect logic here
-        };
-
-        ws.onerror = (err) => console.error('WebSocket error:', err);
+    if (!user) {
+      wsRef.current?.close();
+      wsRef.current = null;
+      return;
     }
 
-    return () => {
-        if (wsRef.current) {
-            wsRef.current.close();
-            wsRef.current = null;
+    let reconnectTimeout: NodeJS.Timeout;
+
+    function connect() {
+      const token = localStorage.getItem('sessionToken');
+      if (!token) return;
+
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${wsProtocol}//${window.location.host}/ws?token=${token}`;
+      
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        logService.log('INFO', 'WebSocket connected.');
+      };
+
+      ws.onmessage = (event) => {
+        const { type, payload } = JSON.parse(event.data);
+         if (type === 'NEW_EMAIL') {
+            const newEmail: Email = payload;
+            logService.log('INFO', 'New email received via WebSocket', newEmail);
+            setEmails(prev => {
+                // Avoid duplicates
+                if (prev.some(e => e.id === newEmail.id)) {
+                    return prev;
+                }
+                return [newEmail, ...prev];
+            });
+            addToast('toasts.newMail', { tOptions: { sender: newEmail.senderName, subject: newEmail.subject } });
+        } else if (type === 'DEBUG_LOG') {
+            logService.addServerLog(payload);
         }
+      };
+      
+      ws.onerror = (event) => {
+          logService.log('ERROR', 'WebSocket error', event);
+      };
+
+      ws.onclose = (event) => {
+        logService.log('WARN', 'WebSocket disconnected. Attempting to reconnect...', event.reason);
+        wsRef.current = null;
+        // Simple exponential backoff
+        reconnectTimeout = setTimeout(connect, 5000);
+      };
+    }
+
+    connect();
+
+    return () => {
+      clearTimeout(reconnectTimeout);
+      wsRef.current?.close();
+      wsRef.current = null;
     };
   }, [user, addToast]);
 
 
   const checkUserSession = useCallback(async () => {
+    logService.log('INFO', 'Checking for active session...');
     setIsLoading(true);
     try {
         const session = await api.apiCheckSession();
         if (session?.user) {
+            logService.log('INFO', 'Active session found, fetching initial data.', { user: session.user });
             const initialData = await api.getInitialData();
             setUser({
                 email: session.user.email,
@@ -272,11 +328,19 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
             if (initialData.appSettings.language) {
                 i18n.changeLanguage(initialData.appSettings.language);
             }
+            const inbox = initialData.userFolders.find(f => f.specialUse === SPECIAL_USE_MAP.Inbox);
+            if (inbox) {
+                setCurrentSelection({ type: 'folder', id: inbox.id });
+            } else {
+                // Fallback if inbox not found
+                setCurrentSelection({ type: 'folder', id: 'INBOX'});
+            }
         } else {
+             logService.log('INFO', 'No active session found.');
              setUser(null);
         }
     } catch (error) {
-        console.error("Session check failed:", error);
+        logService.log('ERROR', 'Session check failed', { error });
         setUser(null);
     } finally {
         setIsLoading(false);
@@ -284,16 +348,17 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
   }, [i18n]);
   
   const login = useCallback(async (email: string, pass: string) => {
+    logService.log('INFO', 'Login function called.', { email });
     setIsLoading(true);
     try {
         if (!email || !pass) {
             throw new Error('Please enter both email and password.');
         }
         const { user: apiUser, token } = await api.apiLogin(email, pass);
-        localStorage.setItem('sessionToken', token);
         api.setAuthToken(token);
         
         const initialData = await api.getInitialData();
+        logService.log('INFO', 'Login successful, initial data loaded.', { user: apiUser, data: initialData });
         
         setUser({
             email: apiUser.email,
@@ -310,9 +375,16 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
             i18n.changeLanguage(initialData.appSettings.language);
         }
         
-        setCurrentSelection({type: 'folder', id: SystemFolder.INBOX});
+        const inbox = initialData.userFolders.find(f => f.specialUse === SPECIAL_USE_MAP.Inbox);
+        if (inbox) {
+            setCurrentSelection({ type: 'folder', id: inbox.id });
+        } else {
+            setCurrentSelection({ type: 'folder', id: 'INBOX' });
+        }
+        
         addToast('toasts.welcome', { tOptions: { name: initialData.appSettings.displayName || apiUser.name } });
     } catch (error: any) {
+        logService.log('ERROR', 'Login failed.', { error });
         addToast(error.message || 'toasts.loginFailed');
         console.error(error);
     } finally {
@@ -322,10 +394,8 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
 
 
   const logout = useCallback(async () => {
-    if (wsRef.current) {
-        wsRef.current.close();
-        wsRef.current = null;
-    }
+    logService.log('INFO', 'Logout initiated.');
+    wsRef.current?.close();
     await api.apiLogout();
     setUser(null);
     setEmails([]);
@@ -334,11 +404,10 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
     setContacts([]);
     setContactGroups([]);
     setAppSettings(initialAppSettings);
-    setCurrentSelection({type: 'folder', id: SystemFolder.INBOX});
+    setCurrentSelection({type: 'folder', id: 'Inbox'});
     setSelectedConversationId(null);
     addToast('toasts.logout');
   }, [addToast]);
-
 
   // --- Data Transformation ---
   const allConversations = useMemo<Conversation[]>(() => {
@@ -351,11 +420,15 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
     }, {} as Record<string, Email[]>);
 
     return Object.entries(grouped)
-      .map(([id, convEmails]) => {
+      .map(([id, convEmails]: [string, Email[]]) => {
         convEmails.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
         const lastEmail = convEmails[convEmails.length - 1];
         const participants = [...new Map(convEmails.map(e => [e.senderEmail, { name: e.senderEmail === user?.email ? t('emailListItem.me') : e.senderName, email: e.senderEmail }])).values()];
         const allLabelIds = [...new Set(convEmails.flatMap(e => e.labelIds))];
+        const latestEmailWithUnsubscribe = [...convEmails].reverse().find(e => !!e.unsubscribeUrl);
+        const trashFolder = systemFoldersMap.get(SystemFolder.TRASH);
+        const spamFolder = systemFoldersMap.get(SystemFolder.SPAM);
+        const inSpamOrTrash = lastEmail.folderId === trashFolder?.id || lastEmail.folderId === spamFolder?.id;
 
         return {
           id,
@@ -367,48 +440,65 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
           folderId: lastEmail.folderId,
           labelIds: allLabelIds,
           isSnoozed: false,
-          hasAttachments: convEmails.some(e => e.attachments && e.attachments.length > 0)
+          hasAttachments: convEmails.some(e => e.attachments && e.attachments.length > 0),
+          hasUnsubscribeLink: !!latestEmailWithUnsubscribe && !inSpamOrTrash,
+          unsubscribeUrl: latestEmailWithUnsubscribe?.unsubscribeUrl,
         };
       })
       .sort((a, b) => new Date(b.lastTimestamp).getTime() - new Date(a.lastTimestamp).getTime());
-  }, [emails, user, t]);
+  }, [emails, user, t, systemFoldersMap]);
 
   const unreadCounts = useMemo(() => {
     const counts: { [key: string]: number } = {};
-    const allLabelIds = [...labels.map(l => l.id), SystemLabel.STARRED];
-    
-    allLabelIds.forEach(id => counts[id] = 0);
-    Object.values(SystemFolder).forEach(id => counts[id] = 0);
-    userFolders.forEach(f => counts[f.id] = 0);
+    const trashFolder = systemFoldersMap.get(SystemFolder.TRASH);
+    const spamFolder = systemFoldersMap.get(SystemFolder.SPAM);
+
+    [...labels.map(l => l.id), SystemLabel.STARRED, ...userFolders.map(f => f.id)].forEach(id => {
+        if (id) counts[id] = 0;
+    });
     
     allConversations.forEach(c => {
       if (!c.isRead) {
-        // Count for folder
-        if (counts[c.folderId] !== undefined) {
-            counts[c.folderId]++;
+        const folderKey = c.folderId;
+        if (counts.hasOwnProperty(folderKey)) {
+            counts[folderKey]++;
         }
         
-        // Count for labels (excluding spam/trash folders)
-        if (c.folderId !== SystemFolder.SPAM && c.folderId !== SystemFolder.TRASH) {
+        if (c.folderId !== spamFolder?.id && c.folderId !== trashFolder?.id) {
           c.labelIds.forEach(labelId => {
-            if (counts[labelId] !== undefined) {
+            if (counts.hasOwnProperty(labelId)) {
                 counts[labelId]++;
             }
           });
         }
       }
     });
-    return counts;
-  }, [allConversations, labels, userFolders]);
+
+    const finalCounts = { ...counts };
+    const sumUpChildren = (folders: UserFolder[]) => {
+        folders.forEach((folder: UserFolder) => {
+            if (folder.children && folder.children.length > 0) {
+                sumUpChildren(folder.children as UserFolder[]);
+                const childrenSum = (folder.children as UserFolder[]).reduce((sum, child) => sum + (finalCounts[child.id] || 0), 0);
+                finalCounts[folder.id] = (finalCounts[folder.id] || 0) + childrenSum;
+            }
+        });
+    };
+    sumUpChildren(folderTree);
+
+    return finalCounts;
+  }, [allConversations, labels, userFolders, folderTree, systemFoldersMap]);
 
 
   const filteredConversations = useMemo(() => {
     let baseList = allConversations;
+    const trashFolder = systemFoldersMap.get(SystemFolder.TRASH);
+    const spamFolder = systemFoldersMap.get(SystemFolder.SPAM);
     
     if (currentSelection.type === 'folder') {
         baseList = allConversations.filter(c => c.folderId === currentSelection.id);
     } else if (currentSelection.type === 'label') {
-        baseList = allConversations.filter(c => c.labelIds.includes(currentSelection.id) && c.folderId !== SystemFolder.SPAM && c.folderId !== SystemFolder.TRASH);
+        baseList = allConversations.filter(c => c.labelIds.includes(currentSelection.id) && c.folderId !== spamFolder?.id && c.folderId !== trashFolder?.id);
     }
     
     let filtered = baseList;
@@ -464,7 +554,7 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
     
     return filtered;
 
-  }, [allConversations, currentSelection, searchQuery]);
+  }, [allConversations, currentSelection, searchQuery, systemFoldersMap]);
   
   const totalItems = filteredConversations.length;
   const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE);
@@ -483,7 +573,16 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
     setFocusedConversationId(null);
     setSearchQuery('');
     setSelectedConversationIds(new Set());
-  }, []);
+    
+    if (type === 'folder') {
+        const folder = userFolders.find(f => f.id === id);
+        if(folder){
+            api.apiRefreshFolder(folder.path).catch(err => {
+                logService.log('WARN', `Could not refresh folder ${folder.path}`, { error: err });
+            });
+        }
+    }
+  }, [userFolders]);
 
   const openCompose = useCallback((config: Partial<Omit<ComposeState, 'isOpen'>> = {}) => {
     const draftId = (config.action === ActionType.DRAFT && config.email) ? config.email.id : undefined;
@@ -499,60 +598,67 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
     try {
         const { emails: updatedEmails } = await api.apiMoveConversations(conversationIds, targetFolderId);
         setEmails(updatedEmails);
-        const folderName = userFolders.find(f => f.id === targetFolderId)?.name || t(`sidebar.systemFolders.${targetFolderId.toLowerCase()}`);
+        const folderName = userFolders.find(f => f.id === targetFolderId)?.name || targetFolderId;
         addToast('toasts.moved', { tOptions: { count: conversationIds.length, folderName: folderName }});
         deselectAllConversations();
         if (conversationIds.includes(selectedConversationId!)) setSelectedConversationId(null);
     } catch (err) {
         addToast('toasts.moveFailed', { duration: 4000 });
-        console.error("Failed to move conversations", err);
     }
-  }, [addToast, userFolders, deselectAllConversations, selectedConversationId, t]);
+  }, [addToast, userFolders, deselectAllConversations, selectedConversationId]);
 
-  const toggleLabel = useCallback(async (conversationIds: string[], labelId: string) => {
+  const setLabelState = useCallback(async (conversationIds: string[], labelId: string, state: boolean) => {
+    const messageIds = conversationIds.flatMap(convId => {
+        const conv = allConversations.find(c => c.id === convId);
+        return conv ? conv.emails.map(e => e.id) : [];
+    });
+    if (messageIds.length === 0) return;
+
     try {
-      const { emails: updatedEmails } = await api.apiToggleLabel(conversationIds, labelId);
+      const { emails: updatedEmails } = await api.apiSetLabelState(messageIds, labelId, state);
       setEmails(updatedEmails);
       const label = labels.find(l => l.id === labelId);
-      const isAdding = updatedEmails.find(e => e.conversationId === conversationIds[0])?.labelIds.includes(labelId);
       if (label?.name !== SystemLabel.STARRED) {
-          addToast(isAdding ? 'toasts.labelAdded' : 'toasts.labelRemoved', { tOptions: { name: label?.name } });
+          addToast(state ? 'toasts.labelAdded' : 'toasts.labelRemoved', { tOptions: { name: label?.name } });
       }
     } catch (err) {
       addToast('toasts.labelUpdateFailed', { duration: 4000 });
-      console.error("Failed to toggle label", err);
     }
-  }, [addToast, labels]);
+  }, [addToast, labels, allConversations]);
   
   const archiveConversation = useCallback((conversationIds: string[]) => {
-    moveConversations(conversationIds, SystemFolder.ARCHIVE);
-  }, [moveConversations]);
+    const archiveFolder = systemFoldersMap.get(SystemFolder.ARCHIVE);
+    if (archiveFolder) {
+      moveConversations(conversationIds, archiveFolder.id);
+    } else {
+      addToast('Archive folder not found.', { duration: 4000 });
+    }
+  }, [moveConversations, systemFoldersMap, addToast]);
 
   const actuallySendEmail = useCallback(async (data: SendEmailData, draftId?: string, conversationId?: string) => {
       if (!user) return;
       try {
-        const { emails: updatedEmails } = await api.apiSendEmail(data, user, conversationId, draftId);
+        const { emails: updatedEmails } = await api.apiSendEmail(data, conversationId, draftId);
         setEmails(updatedEmails);
         if (data.scheduleDate) {
             addToast('toasts.messageScheduled');
         } else {
             addToast('toasts.messageSent');
         }
-        const targetFolder = data.scheduleDate ? SystemFolder.SCHEDULED : SystemFolder.SENT;
-        if (currentSelection.id !== targetFolder) {
-            setCurrentSelectionCallback('folder', targetFolder);
+        const targetSystemFolder = data.scheduleDate ? systemFoldersMap.get(SystemFolder.SCHEDULED) : systemFoldersMap.get(SystemFolder.SENT);
+        if (targetSystemFolder && currentSelection.id !== targetSystemFolder.id) {
+            setCurrentSelectionCallback('folder', targetSystemFolder.id);
         }
       } catch (err) {
           addToast('toasts.sendFailed', { duration: 4000 });
-          console.error("Failed to send email", err);
       }
-  }, [user, addToast, setCurrentSelectionCallback, currentSelection]);
+  }, [user, addToast, setCurrentSelectionCallback, currentSelection, systemFoldersMap]);
 
   const cancelSend = useCallback(() => {
     if (pendingSend) {
         clearTimeout(pendingSend.timerId);
         openCompose({ 
-            initialData: pendingSend.emailData, 
+            initialData: pendingSend.emailData,
             draftId: pendingSend.draftId,
             conversationId: pendingSend.conversationId,
         });
@@ -561,8 +667,8 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
     }
   }, [pendingSend, openCompose, addToast]);
 
-  const sendEmail = useCallback((data: SendEmailData, draftId?: string) => {
-    const convId = composeState.conversationId;
+  const sendEmail = useCallback((data: SendEmailData, draftId?: string, conversationId?: string) => {
+    const convId = conversationId || composeState.conversationId;
     closeCompose();
 
     if (data.scheduleDate) {
@@ -589,26 +695,29 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
     }
   }, [closeCompose, actuallySendEmail, appSettings.sendDelay, pendingSend, addToast, cancelSend, composeState.conversationId]);
   
-  const saveDraft = useCallback((data: SendEmailData, draftId?: string) => {
-      if (!user) return '';
-      const conversationId = composeState.conversationId || `conv-${Date.now()}`;
+  const saveDraft = useCallback(async (data: Partial<SendEmailData>, draftId?: string, conversationId?: string): Promise<string> => {
+      if (!user) return draftId || '';
+      const convId = conversationId || `conv-${Date.now()}`;
       
-      api.apiSaveDraft(data, user, conversationId, draftId).then(({ emails, newDraftId }) => {
-          setEmails(emails);
-          addToast('toasts.draftSaved');
-          if (currentSelection.id !== SystemFolder.DRAFTS) {
-            setCurrentSelectionCallback('folder', SystemFolder.DRAFTS);
-          }
-          if(composeState.isOpen) { // keep draftId up to date if compose window is open
-            setComposeState(prev => ({...prev, draftId: newDraftId}));
-          }
-      }).catch(err => {
-          addToast('toasts.saveDraftFailed', { duration: 4000 });
-          console.error("Failed to save draft", err);
-      });
+      const fullData: SendEmailData = {
+          to: data.to || '',
+          cc: data.cc || '',
+          bcc: data.bcc || '',
+          subject: data.subject || '',
+          body: data.body || '',
+          attachments: data.attachments as Attachment[] || [],
+      };
 
-      return draftId || ''; // This is optimistic
-  }, [user, addToast, composeState.conversationId, composeState.isOpen, currentSelection, setCurrentSelectionCallback]);
+      try {
+        const { emails, newDraftId } = await api.apiSaveDraft(fullData, user, convId, draftId);
+        setEmails(emails);
+        addToast('toasts.draftSaved');
+        return newDraftId;
+      } catch (err) {
+        addToast('toasts.saveDraftFailed', { duration: 4000 });
+        return draftId || '';
+      }
+  }, [user, addToast]);
 
   const deleteDraft = useCallback(async (draftId: string) => {
     try {
@@ -617,13 +726,18 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
         addToast('toasts.draftDiscarded');
     } catch (err) {
         addToast('toasts.discardDraftFailed', { duration: 4000 });
-        console.error("Failed to delete draft", err);
     }
   }, [addToast]);
 
   const deleteConversation = useCallback(async (conversationIds: string[]) => {
     const convsToDelete = allConversations.filter(c => conversationIds.includes(c.id));
-    const isPermanentDelete = convsToDelete.every(c => c.folderId === SystemFolder.TRASH);
+    const trashFolder = systemFoldersMap.get(SystemFolder.TRASH);
+    if (!trashFolder) {
+        addToast('Trash folder not found.', { duration: 4000 });
+        return;
+    }
+    
+    const isPermanentDelete = convsToDelete.every(c => c.folderId === trashFolder.id);
 
     if (isPermanentDelete) {
         try {
@@ -632,15 +746,14 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
             addToast('toasts.deletedPermanently', { tOptions: { count: conversationIds.length } });
         } catch (err) {
             addToast('toasts.deletePermanentlyFailed', { duration: 4000 });
-            console.error("Failed to delete permanently", err);
         }
     } else {
-        await moveConversations(conversationIds, SystemFolder.TRASH);
+        await moveConversations(conversationIds, trashFolder.id);
     }
 
     if(selectedConversationIds.size > 0) deselectAllConversations();
     if(conversationIds.includes(selectedConversationId!)) setSelectedConversationId(null);
-  }, [allConversations, moveConversations, addToast, selectedConversationId, selectedConversationIds, deselectAllConversations]);
+  }, [allConversations, moveConversations, addToast, selectedConversationId, selectedConversationIds, deselectAllConversations, systemFoldersMap]);
 
   const handleEscape = useCallback(() => {
     if (composeState.isOpen) return;
@@ -667,7 +780,6 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
         setEmails(updatedEmails);
     } catch (err) {
         addToast(`toasts.markReadFailed`, { duration: 4000, tOptions: { status: isRead ? t('status.read') : t('status.unread') } });
-        console.error("Failed to mark conversations", err);
     }
   }, [addToast, t]);
   
@@ -738,9 +850,9 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
       }
   }, [addToast, labels]);
   
-  const createFolder = useCallback(async (name: string) => {
+  const createFolder = useCallback(async (name: string, parentId: string | null) => {
       try {
-        const { folders: updatedFolders } = await api.apiCreateFolder(name);
+        const { folders: updatedFolders } = await api.apiCreateFolder(name, parentId);
         setUserFolders(updatedFolders);
         addToast('toasts.folderCreated', { tOptions: { name }});
       } catch (err) {
@@ -790,12 +902,22 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
   }, [addToast]);
 
   const markAsSpam = useCallback((conversationIds: string[]) => {
-    moveConversations(conversationIds, SystemFolder.SPAM);
-  }, [moveConversations]);
+    const spamFolder = systemFoldersMap.get(SystemFolder.SPAM);
+    if (spamFolder) {
+      moveConversations(conversationIds, spamFolder.id);
+    } else {
+      addToast('Spam folder not found.', { duration: 4000 });
+    }
+  }, [moveConversations, systemFoldersMap, addToast]);
 
   const markAsNotSpam = useCallback((conversationIds: string[]) => {
-    moveConversations(conversationIds, SystemFolder.INBOX);
-  }, [moveConversations]);
+    const inboxFolder = systemFoldersMap.get(SystemFolder.INBOX);
+    if (inboxFolder) {
+      moveConversations(conversationIds, inboxFolder.id);
+    } else {
+      addToast('Inbox folder not found.', { duration: 4000 });
+    }
+  }, [moveConversations, systemFoldersMap, addToast]);
 
   const addContact = useCallback(async (contactData: Omit<Contact, 'id'>) => {
     try {
@@ -805,7 +927,6 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
         setSelectedContactId(newContactId);
     } catch(err) {
         addToast('toasts.addContactFailed', { duration: 4000 });
-        console.error("Failed to add contact", err);
     }
   }, [addToast]);
   
@@ -816,7 +937,6 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
         addToast('toasts.contactUpdated');
     } catch(err) {
         addToast('toasts.updateContactFailed', { duration: 4000 });
-        console.error("Failed to update contact", err);
     }
   }, [addToast]);
 
@@ -829,7 +949,6 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
         setSelectedContactId(null);
     } catch(err) {
         addToast('toasts.deleteContactFailed', { duration: 4000 });
-        console.error("Failed to delete contact", err);
     }
   }, [addToast]);
   
@@ -848,7 +967,6 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
         addToast(toastMessageKey || 'toasts.importEmpty', { tOptions: { importedCount, skippedCount }});
     } catch (err) {
         addToast('toasts.importFailed', { duration: 4000 });
-        console.error("Failed to import contacts", err);
     }
   }, [addToast]);
   
@@ -859,7 +977,6 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
         addToast('toasts.groupCreated', { tOptions: { name } });
     } catch(err) {
         addToast('toasts.createGroupFailed', { duration: 4000 });
-        console.error("Failed to create group", err);
     }
   }, [addToast]);
   
@@ -870,7 +987,6 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
         addToast('toasts.groupRenamed');
     } catch(err) {
         addToast('toasts.renameGroupFailed', { duration: 4000 });
-        console.error("Failed to rename group", err);
     }
   }, [addToast]);
   
@@ -882,7 +998,6 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
         addToast('toasts.groupDeleted');
     } catch(err) {
         addToast('toasts.deleteGroupFailed', { duration: 4000 });
-        console.error("Failed to delete group", err);
     }
   }, [addToast, selectedGroupId]);
   
@@ -895,7 +1010,6 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
         if(groupName && contactName) addToast('toasts.contactAddedToGroup', { tOptions: { contactName, groupName } });
     } catch(err) {
         addToast('toasts.addToGroupFailed', { duration: 4000 });
-        console.error("Failed to add to group", err);
     }
   }, [addToast, contactGroups, contacts]);
   
@@ -905,7 +1019,6 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
         setContactGroups(updatedGroups);
     } catch (err) {
         addToast('toasts.removeFromGroupFailed', { duration: 4000 });
-        console.error("Failed to remove from group", err);
     }
   }, [addToast]);
 
@@ -978,12 +1091,12 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
   const setViewCallback = useCallback((newView: View) => { setView(newView); setSelectedConversationId(null); setFocusedConversationId(null); setSearchQuery(''); setSelectedConversationIds(new Set()); setSelectedContactId(null); }, []);
 
   const contextValue: AppContextType = {
-    user, emails, conversations: allConversations, labels, userFolders, currentSelection, selectedConversationId, focusedConversationId, composeState, searchQuery, selectedConversationIds, theme, displayedConversations, isSidebarCollapsed, view, appSettings, contacts, contactGroups, selectedContactId, selectedGroupId, isLoading, unreadCounts, currentPage, totalPages, totalItems,
+    user, emails, conversations: allConversations, labels, userFolders, folderTree, systemFoldersMap, currentSelection, selectedConversationId, focusedConversationId, composeState, searchQuery, selectedConversationIds, theme, displayedConversations, isSidebarCollapsed, view, appSettings, contacts, contactGroups, selectedContactId, selectedGroupId, isLoading, unreadCounts, currentPage, totalPages, totalItems,
     login, logout, checkUserSession,
     setCurrentSelection: setCurrentSelectionCallback, setSelectedConversationId, setSearchQuery, setCurrentPage,
     openCompose, closeCompose, toggleMinimizeCompose, sendEmail, cancelSend, saveDraft, deleteDraft,
     moveConversations,
-    toggleLabel, deleteConversation, archiveConversation, markAsRead, markAsUnread, markAsSpam, markAsNotSpam,
+    setLabelState, deleteConversation, archiveConversation, markAsRead, markAsUnread, markAsSpam, markAsNotSpam,
     toggleConversationSelection, selectAllConversations, deselectAllConversations, bulkDelete, bulkMarkAsRead, bulkMarkAsUnread,
     toggleTheme, toggleSidebar, handleEscape, navigateConversationList, openFocusedConversation, setView: setViewCallback,
     updateSignature, updateAutoResponder, addRule, deleteRule, updateGeneralSettings, completeOnboarding, updateProfile,

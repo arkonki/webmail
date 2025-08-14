@@ -1,13 +1,18 @@
-
 import {
-    User, Email, Label, UserFolder, Contact, ContactGroup, SystemFolder, AppSettings
+    User, Email, Label, UserFolder, Contact, ContactGroup, AppSettings, SendEmailData, Attachment
 } from '../types';
+import { logService } from './logService';
 
 // This will hold the JWT or session token after login
 let authToken: string | null = null;
 
 export const setAuthToken = (token: string | null) => {
     authToken = token;
+    if (token) {
+        localStorage.setItem('sessionToken', token);
+    } else {
+        localStorage.removeItem('sessionToken');
+    }
 };
 
 // Initialize token from localStorage on module load
@@ -16,254 +21,218 @@ if (storedToken) {
     setAuthToken(storedToken);
 }
 
-// Use environment variable for production, otherwise use a relative path for dev proxy
-// Safely access the environment variable to prevent runtime errors.
-const API_BASE = ((import.meta as any).env && (import.meta as any).env.VITE_API_BASE_URL) || '';
+// In development, Vite's proxy handles this. For production, API calls are on the same origin.
+const API_BASE = '';
 
 // A helper to make authenticated requests
 const fetchApi = async (path: string, options: RequestInit = {}) => {
     const headers = new Headers(options.headers || {});
-    headers.set('Content-Type', 'application/json');
+    if (!(options.body instanceof FormData)) {
+        headers.set('Content-Type', 'application/json');
+    }
     if (authToken) {
         headers.set('Authorization', `Bearer ${authToken}`);
     }
 
-    // If API_BASE is set, it's a full URL. Otherwise, path should start with /api.
-    const fullPath = API_BASE ? `${API_BASE}/api${path}` : `/api${path}`;
+    const fullPath = API_BASE + path;
+    const method = options.method || 'GET';
+    const bodyForLog = options.body ? JSON.parse(options.body as string) : undefined;
+    logService.log('DEBUG', `API Request ==> ${method} ${path}`, { body: bodyForLog });
 
-    const response = await fetch(fullPath, {
-        ...options,
-        headers,
-    });
-
-    if (!response.ok) {
-        let errorMessage = `HTTP error! status: ${response.status}`;
-        try {
-            const errorBody = await response.json();
-            errorMessage = errorBody.message || errorMessage;
-        } catch (e) {
-            // Ignore if response body is not JSON
-        }
-        if (response.status === 401) {
-            // Auto-logout on auth error
-            setAuthToken(null);
-            localStorage.removeItem('sessionToken');
-        }
-        throw new Error(errorMessage);
-    }
-    
-    // Handle responses that might not have a body
-    const contentType = response.headers.get("content-type");
-    if (contentType && contentType.indexOf("application/json") !== -1) {
-        return response.json();
-    }
-    return;
-};
-
-
-// --- Auth ---
-
-export const apiLogin = async (email: string, password: string): Promise<{ user: User, token: string }> => {
-    console.log(`API: Authenticating ${email}`);
-    const { user, token } = await fetchApi('/login', {
-        method: 'POST',
-        body: JSON.stringify({ email, password }),
-    });
-    // The token is set in the context after this call
-    return { user, token };
-};
-
-export const apiLogout = async (): Promise<void> => {
     try {
-        await fetchApi('/logout', { method: 'POST' });
+        const response = await fetch(fullPath, { ...options, headers });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ message: response.statusText }));
+            logService.log('ERROR', `API Error <== ${method} ${path}`, { status: response.status, error: errorData });
+            throw new Error(errorData.message || `Request failed with status ${response.status}`);
+        }
+
+        if (response.status === 204 || response.headers.get('content-length') === '0') {
+            logService.log('DEBUG', `API Success <== ${method} ${path}`, { status: response.status, response: null });
+            return null;
+        }
+
+        const data = await response.json();
+        logService.log('DEBUG', `API Success <== ${method} ${path}`, { status: response.status, response: data });
+        return data;
     } catch (error) {
-        console.error("Logout failed, but clearing client session anyway.", error);
-    } finally {
-        setAuthToken(null);
-        localStorage.removeItem('sessionToken');
+        logService.log('ERROR', `API Fetch Failed: ${method} ${path}`, { error });
+        throw error;
     }
-}
-
-export const apiCheckSession = async (): Promise<{ user: User } | null> => {
-    if (!authToken) {
-        return null;
-    }
-    try {
-        const { user } = await fetchApi('/session');
-        return { user };
-    } catch (error) {
-        console.log("No active session found.");
-        setAuthToken(null);
-        localStorage.removeItem('sessionToken');
-        return null;
-    }
-}
-
-
-// --- Initial Data ---
-
-export const getInitialData = async (): Promise<{ emails: Email[], labels: Label[], userFolders: UserFolder[], contacts: Contact[], contactGroups: ContactGroup[], appSettings: AppSettings }> => {
-    console.log("API: Fetching initial data");
-    return fetchApi('/initial-data');
 };
 
-
-// --- Mail Actions ---
-
-export const apiMoveConversations = async (conversationIds: string[], targetFolderId: string): Promise<{ emails: Email[] }> => {
-    console.log(`API: Moving conversations ${conversationIds} to ${targetFolderId}`);
-    return fetchApi('/conversations/move', {
+// --- AUTH ---
+export const apiLogin = (email: string, pass: string): Promise<{ user: User, token: string }> => {
+    return fetchApi('/api/login', {
         method: 'POST',
-        body: JSON.stringify({ conversationIds, targetFolderId }),
+        body: JSON.stringify({ email, password: pass })
     });
 };
 
-export const apiDeletePermanently = async (conversationIds: string[]): Promise<{ emails: Email[] }> => {
-    console.log(`API: Permanently deleting conversations ${conversationIds}`);
-    return fetchApi('/conversations/delete-permanently', {
+export const apiCheckSession = (): Promise<{ user: User } | null> => fetchApi('/api/session');
+
+export const apiLogout = (): Promise<void> => {
+    const promise = fetchApi('/api/logout', { method: 'POST' });
+    setAuthToken(null);
+    return promise;
+};
+
+// --- INITIAL DATA ---
+export const getInitialData = (): Promise<{ emails: Email[], labels: Label[], userFolders: UserFolder[], contacts: Contact[], contactGroups: ContactGroup[], appSettings: AppSettings }> => {
+    return fetchApi('/api/initial-data');
+};
+
+
+// --- MAIL ACTIONS ---
+export const apiMoveConversations = (conversationIds: string[], targetFolderId: string): Promise<{ emails: Email[] }> => {
+    return fetchApi('/api/conversations/move', {
         method: 'POST',
-        body: JSON.stringify({ conversationIds }),
+        body: JSON.stringify({ conversationIds, targetFolderId })
     });
 };
 
-export const apiToggleLabel = async (conversationIds: string[], labelId: string): Promise<{ emails: Email[] }> => {
-    console.log(`API: Toggling label ${labelId} for conversations ${conversationIds}`);
-    return fetchApi('/conversations/toggle-label', {
+export const apiDeletePermanently = (conversationIds: string[]): Promise<{ emails: Email[] }> => {
+    return fetchApi('/api/conversations/delete-permanently', {
         method: 'POST',
-        body: JSON.stringify({ conversationIds, labelId }),
+        body: JSON.stringify({ conversationIds })
     });
 };
 
-export const apiMarkConversationsAsRead = async (conversationIds: string[], isRead: boolean): Promise<{ emails: Email[] }> => {
-    console.log(`API: Marking conversations ${conversationIds} as read=${isRead}`);
-    return fetchApi('/conversations/mark-read', {
+export const apiSetLabelState = (messageIds: string[], labelId: string, state: boolean): Promise<{ emails: Email[] }> => {
+    return fetchApi('/api/conversations/set-label-state', {
         method: 'POST',
-        body: JSON.stringify({ conversationIds, isRead }),
+        body: JSON.stringify({ messageIds, labelId, state })
     });
 };
 
-interface SendEmailData {
-  to: string; cc?: string; bcc?: string; subject: string; body: string; attachments: File[]; scheduleDate?: Date;
-}
-
-export const apiSendEmail = async (data: SendEmailData, user: User, conversationId?: string, draftId?: string): Promise<{ emails: Email[] }> => {
-    console.log("API: Sending email");
-    // File sending would typically be handled with FormData, but we'll simulate with JSON for now.
-    const payload = { data, user, conversationId, draftId };
-    return fetchApi('/emails/send', {
+export const apiMarkConversationsAsRead = (conversationIds: string[], isRead: boolean): Promise<{ emails: Email[] }> => {
+    return fetchApi('/api/conversations/mark-read', {
         method: 'POST',
-        body: JSON.stringify(payload)
+        body: JSON.stringify({ conversationIds, isRead })
     });
 };
 
-export const apiSaveDraft = async (data: SendEmailData, user: User, conversationId: string, draftId?: string): Promise<{ emails: Email[], newDraftId: string }> => {
-    console.log("API: Saving draft");
-    const payload = { data, user, conversationId, draftId };
-    return fetchApi('/emails/draft', {
+export const apiSendEmail = (data: SendEmailData, conversationId?: string, draftId?: string): Promise<{ emails: Email[] }> => {
+    return fetchApi('/api/emails/send', {
         method: 'POST',
-        body: JSON.stringify(payload)
+        body: JSON.stringify({ data, conversationId, draftId })
     });
 };
 
-export const apiDeleteDraft = async (draftId: string): Promise<{ emails: Email[] }> => {
-    console.log(`API: Deleting draft ${draftId}`);
-    return fetchApi('/emails/draft', {
+export const apiSaveDraft = (data: Omit<SendEmailData, 'attachments'> & { attachments: Attachment[] }, user: User, conversationId?: string, draftId?: string): Promise<{ emails: Email[], newDraftId: string }> => {
+    return fetchApi('/api/emails/draft', {
+        method: 'POST',
+        body: JSON.stringify({ data, user, conversationId, draftId })
+    });
+};
+
+export const apiDeleteDraft = (draftId: string): Promise<{ emails: Email[] }> => {
+    return fetchApi('/api/emails/draft', {
         method: 'DELETE',
         body: JSON.stringify({ draftId })
     });
 };
 
+// --- LABELS ---
+export const apiCreateLabel = (name: string, color: string): Promise<{ labels: Label[] }> => {
+    return fetchApi('/api/labels', {
+        method: 'POST',
+        body: JSON.stringify({ name, color })
+    });
+};
+export const apiUpdateLabel = (id: string, updates: Partial<Omit<Label, 'id'>>): Promise<{ labels: Label[] }> => {
+    return fetchApi(`/api/labels/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(updates)
+    });
+};
+export const apiDeleteLabel = (id: string): Promise<{ labels: Label[], emails: Email[] }> => fetchApi(`/api/labels/${id}`, { method: 'DELETE' });
 
-// --- Labels & Folders ---
-
-export const apiCreateLabel = async (name: string, color: string): Promise<{ labels: Label[] }> => {
-    return fetchApi('/labels', { method: 'POST', body: JSON.stringify({ name, color }) });
+// --- FOLDERS ---
+export const apiCreateFolder = (name: string, parentId: string | null): Promise<{ folders: UserFolder[] }> => {
+    return fetchApi('/api/folders', {
+        method: 'POST',
+        body: JSON.stringify({ name, parentId })
+    });
+};
+export const apiUpdateFolder = (id: string, newName: string): Promise<{ folders: UserFolder[] }> => {
+    return fetchApi(`/api/folders/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ newName })
+    });
+};
+export const apiDeleteFolder = (id: string): Promise<{ folders: UserFolder[], emails: Email[] }> => fetchApi(`/api/folders/${id}`, { method: 'DELETE' });
+export const apiSyncFolders = (): Promise<{ folders: UserFolder[] }> => fetchApi('/api/folders/sync', { method: 'POST' });
+export const apiRefreshFolder = (folderPath: string): Promise<{ message: string }> => {
+    return fetchApi(`/api/folders/${folderPath}/refresh`, { method: 'POST' });
+};
+export const apiUpdateFolderSubscription = (id: string, isSubscribed: boolean): Promise<{ folders: UserFolder[] }> => {
+    return fetchApi(`/api/folders/${id}/subscription`, {
+        method: 'PATCH',
+        body: JSON.stringify({ isSubscribed })
+    });
 };
 
-export const apiUpdateLabel = async (id: string, updates: Partial<Omit<Label, 'id'>>): Promise<{ labels: Label[] }> => {
-    return fetchApi(`/labels/${id}`, { method: 'PATCH', body: JSON.stringify(updates) });
+// --- SETTINGS & PROFILE ---
+export const apiUpdateSettings = (settings: AppSettings): Promise<{ settings: AppSettings }> => {
+    return fetchApi('/api/settings', {
+        method: 'POST',
+        body: JSON.stringify(settings)
+    });
 };
-
-export const apiDeleteLabel = async (id: string): Promise<{ labels: Label[], emails: Email[] }> => {
-    return fetchApi(`/labels/${id}`, { method: 'DELETE' });
-};
-
-export const apiCreateFolder = async (name: string): Promise<{ folders: UserFolder[] }> => {
-    return fetchApi('/folders', { method: 'POST', body: JSON.stringify({ name }) });
-};
-
-export const apiUpdateFolder = async (id: string, newName: string): Promise<{ folders: UserFolder[] }> => {
-    return fetchApi(`/folders/${id}`, { method: 'PATCH', body: JSON.stringify({ newName }) });
-};
-
-export const apiDeleteFolder = async (id: string): Promise<{ folders: UserFolder[], emails: Email[] }> => {
-    return fetchApi(`/folders/${id}`, { method: 'DELETE' });
-};
-
-export const apiSyncFolders = async (): Promise<{ folders: UserFolder[] }> => {
-    return fetchApi('/folders/sync', { method: 'POST' });
-};
-
-export const apiUpdateFolderSubscription = async (id: string, isSubscribed: boolean): Promise<{ folders: UserFolder[] }> => {
-    return fetchApi(`/folders/${id}/subscription`, { method: 'PATCH', body: JSON.stringify({ isSubscribed }) });
-};
-
-
-// --- Settings & Profile ---
-
-export const apiUpdateSettings = async (settings: AppSettings): Promise<{ settings: AppSettings }> => {
-    return fetchApi('/settings', { method: 'POST', body: JSON.stringify(settings) });
-};
-
-export const apiCompleteOnboarding = async (data: Partial<AppSettings>): Promise<{ settings: AppSettings, contacts: Contact[] }> => {
-    return fetchApi('/onboarding', {
+export const apiCompleteOnboarding = (data: Partial<AppSettings>): Promise<{ settings: AppSettings, contacts: Contact[] }> => {
+    return fetchApi('/api/onboarding', {
         method: 'POST',
         body: JSON.stringify(data)
     });
 };
-
-export const apiUpdateProfile = async (data: { displayName: string, profilePicture?: string }): Promise<{ settings: AppSettings }> => {
-    return fetchApi('/settings/profile', {
+export const apiUpdateProfile = (data: { displayName: string, profilePicture?: string }): Promise<{ settings: AppSettings }> => {
+    return fetchApi('/api/settings/profile', {
         method: 'PATCH',
         body: JSON.stringify(data)
     });
 };
 
-
-// --- Contacts & Groups ---
-
-export const apiAddContact = async (contactData: Omit<Contact, 'id'>): Promise<{ contacts: Contact[], newContactId: string }> => {
-    return fetchApi('/contacts', { method: 'POST', body: JSON.stringify(contactData) });
+// --- CONTACTS ---
+export const apiAddContact = (contactData: Omit<Contact, 'id'>): Promise<{ contacts: Contact[], newContactId: string }> => {
+    return fetchApi('/api/contacts', {
+        method: 'POST',
+        body: JSON.stringify(contactData)
+    });
+};
+export const apiUpdateContact = (contact: Contact): Promise<{ contacts: Contact[] }> => {
+    return fetchApi(`/api/contacts/${contact.id}`, {
+        method: 'PUT',
+        body: JSON.stringify(contact)
+    });
+};
+export const apiDeleteContact = (contactId: string): Promise<{ contacts: Contact[], groups: ContactGroup[] }> => fetchApi(`/api/contacts/${contactId}`, { method: 'DELETE' });
+export const apiImportContacts = (newContacts: Omit<Contact, 'id'>[]): Promise<{ contacts: Contact[], importedCount: number, skippedCount: number }> => {
+    return fetchApi('/api/contacts/import', {
+        method: 'POST',
+        body: JSON.stringify({ newContacts })
+    });
 };
 
-export const apiUpdateContact = async (updatedContact: Contact): Promise<{ contacts: Contact[] }> => {
-    return fetchApi(`/contacts/${updatedContact.id}`, { method: 'PUT', body: JSON.stringify(updatedContact) });
+// --- CONTACT GROUPS ---
+export const apiCreateContactGroup = (name: string): Promise<{ groups: ContactGroup[] }> => {
+    return fetchApi('/api/contact-groups', {
+        method: 'POST',
+        body: JSON.stringify({ name })
+    });
 };
-
-export const apiDeleteContact = async (contactId: string): Promise<{ contacts: Contact[], groups: ContactGroup[] }> => {
-    return fetchApi(`/contacts/${contactId}`, { method: 'DELETE' });
+export const apiRenameContactGroup = (groupId: string, newName: string): Promise<{ groups: ContactGroup[] }> => {
+    return fetchApi(`/api/contact-groups/${groupId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ newName })
+    });
 };
-
-export const apiImportContacts = async (newContacts: Omit<Contact, 'id'>[]): Promise<{ contacts: Contact[], importedCount: number, skippedCount: number }> => {
-    return fetchApi('/contacts/import', { method: 'POST', body: JSON.stringify({ newContacts }) });
+export const apiDeleteContactGroup = (groupId: string): Promise<{ groups: ContactGroup[] }> => fetchApi(`/api/contact-groups/${groupId}`, { method: 'DELETE' });
+export const apiAddContactToGroup = (groupId: string, contactId: string): Promise<{ groups: ContactGroup[] }> => {
+    return fetchApi(`/api/contact-groups/${groupId}/members`, {
+        method: 'POST',
+        body: JSON.stringify({ contactId })
+    });
 };
-
-export const apiCreateContactGroup = async (name: string): Promise<{ groups: ContactGroup[] }> => {
-    return fetchApi('/contact-groups', { method: 'POST', body: JSON.stringify({ name }) });
-};
-
-export const apiRenameContactGroup = async (groupId: string, newName: string): Promise<{ groups: ContactGroup[] }> => {
-    return fetchApi(`/contact-groups/${groupId}`, { method: 'PATCH', body: JSON.stringify({ newName }) });
-};
-
-export const apiDeleteContactGroup = async (groupId: string): Promise<{ groups: ContactGroup[] }> => {
-    return fetchApi(`/contact-groups/${groupId}`, { method: 'DELETE' });
-};
-
-export const apiAddContactToGroup = async (groupId: string, contactId: string): Promise<{ groups: ContactGroup[] }> => {
-    return fetchApi(`/contact-groups/${groupId}/members`, { method: 'POST', body: JSON.stringify({ contactId }) });
-};
-
-export const apiRemoveContactFromGroup = async (groupId: string, contactId: string): Promise<{ groups: ContactGroup[] }> => {
-    return fetchApi(`/contact-groups/${groupId}/members/${contactId}`, { method: 'DELETE' });
-};
+export const apiRemoveContactFromGroup = (groupId: string, contactId: string): Promise<{ groups: ContactGroup[] }> => fetchApi(`/api/contact-groups/${groupId}/members/${contactId}`, { method: 'DELETE' });

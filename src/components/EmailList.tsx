@@ -22,7 +22,7 @@ const BulkActionBar = () => {
     const { 
       selectedConversationIds, bulkDelete, bulkMarkAsRead, bulkMarkAsUnread, 
       deselectAllConversations, markAsSpam, archiveConversation, 
-      currentSelection, moveConversations
+      currentSelection, moveConversations, userFolders
     } = useAppContext();
     const [isLabelPopoverOpen, setIsLabelPopoverOpen] = useState(false);
     const [isMovePopoverOpen, setIsMovePopoverOpen] = useState(false);
@@ -43,7 +43,8 @@ const BulkActionBar = () => {
         setIsMovePopoverOpen(false);
     }
 
-    const showArchive = currentSelection.type === 'folder' && currentSelection.id === SystemFolder.INBOX;
+    const currentFolder = userFolders.find(f => f.id === currentSelection.id);
+    const showArchive = currentFolder?.specialUse === '\\Inbox';
 
     return (
         <div className="flex items-center justify-between p-2 bg-primary/10 dark:bg-primary/20 border-b border-outline dark:border-dark-outline">
@@ -170,29 +171,33 @@ const EmailList: React.FC = () => {
   };
 
   return (
-    <div className="flex-grow flex flex-col bg-white dark:bg-dark-surface overflow-y-auto">
-        { showBulkActions ? <BulkActionBar /> : (
-            <div className="p-4 border-b border-outline dark:border-dark-outline flex items-center justify-between gap-4">
-                 <div className="flex items-center gap-4 flex-grow min-w-0">
-                    <input
-                        type="checkbox"
-                        className="form-checkbox h-5 w-5 text-primary rounded border-gray-300 dark:border-gray-600 bg-transparent dark:bg-gray-800 focus:ring-primary flex-shrink-0"
-                        checked={areAllSelected}
-                        onChange={handleSelectAll}
-                        disabled={displayedConversations.length === 0}
-                        title="Select all"
-                    />
-                    <div className="flex-grow max-w-xl min-w-0">
-                        <SearchBar />
+    <div className="flex-grow flex flex-col bg-white dark:bg-dark-surface overflow-hidden">
+        <div className="flex-shrink-0">
+            { showBulkActions ? <BulkActionBar /> : (
+                <div className="p-4 border-b border-outline dark:border-dark-outline flex items-center justify-between gap-4">
+                     <div className="flex items-center gap-4 flex-grow min-w-0">
+                        <input
+                            type="checkbox"
+                            className="form-checkbox h-5 w-5 text-primary rounded border-gray-300 dark:border-gray-600 bg-transparent dark:bg-gray-800 focus:ring-primary flex-shrink-0"
+                            checked={areAllSelected}
+                            onChange={handleSelectAll}
+                            disabled={displayedConversations.length === 0}
+                            title="Select all"
+                        />
+                        <div className="flex-grow max-w-xl min-w-0">
+                            <SearchBar />
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-4 flex-shrink-0">
+                        <h2 className="text-lg font-medium text-on-surface dark:text-dark-on-surface truncate hidden lg:block">{listTitle}</h2>
+                        <PaginationControls />
                     </div>
                 </div>
-                <div className="flex items-center gap-4 flex-shrink-0">
-                    <h2 className="text-lg font-medium text-on-surface dark:text-dark-on-surface truncate hidden lg:block">{listTitle}</h2>
-                    <PaginationControls />
-                </div>
-            </div>
-        )}
-      {renderContent()}
+            )}
+        </div>
+        <div className="flex-grow overflow-y-auto">
+          {renderContent()}
+        </div>
     </div>
   );
 };
